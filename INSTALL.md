@@ -1,10 +1,10 @@
-# Installation — Vigie v0.0.10
+# Installation — Vigie v0.0.11
 
 Sur Debian 13 :
 
 ```bash
-unzip vigie-eple-v0.0.10.zip
-cd vigie-eple-v0.0.10
+unzip vigie-eple-v0.0.11.zip
+cd vigie-eple-v0.0.11
 sudo bash deploy/install-debian13.sh
 ```
 

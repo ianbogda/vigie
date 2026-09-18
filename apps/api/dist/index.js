@@ -9,7 +9,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.10';
+const VERSION = '0.0.11';
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
 const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://vigie:vigie@127.0.0.1:5432/vigie' });
@@ -198,9 +198,15 @@ function parseBudgetLis(buf) {
         throw new Error('Export Budget Op@le reconnu mais aucune ligne budgétaire exploitable.');
     return { type: 'budget', entity, establishment, snapshotDate, rows };
 }
-function parseFdr(buf) {
+function parseOpaleCsv(buf) {
     const text = buf.toString('utf8').replace(/^\uFEFF/, '');
-    const records = parseCsv(text, { columns: true, delimiter: ';', bom: true, skip_empty_lines: true, relax_column_count: true, trim: true });
+    return parseCsv(text, {
+        columns: true, delimiter: ';', bom: true, skip_empty_lines: true,
+        relax_column_count: true, relax_quotes: true, trim: false, group_columns_by_name: true
+    });
+}
+function parseFdr(buf) {
+    const records = parseOpaleCsv(buf);
     if (!records.length)
         throw new Error('FDR vide.');
     const keys = Object.keys(records[0]);
@@ -224,8 +230,7 @@ function detectCsvType(buf) {
     return 'unknown';
 }
 function parseClca(buf) {
-    const text = buf.toString('utf8').replace(/^\uFEFF/, '');
-    const records = parseCsv(text, { columns: true, delimiter: ';', bom: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, trim: false, group_columns_by_name: true });
+    const records = parseOpaleCsv(buf);
     if (!records.length)
         throw new Error('CLCA vide.');
     const keys = Object.keys(records[0]);

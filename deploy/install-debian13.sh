@@ -131,7 +131,7 @@ log "Contrôles"
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
 HEALTH_JSON="$(curl -fsS "http://127.0.0.1:$API_PORT/health")" || fail "L'API ne répond pas sur /health."
-grep -q '"version":"0.0.10"' <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu 0.0.10)."
+grep -q '"version":"0.0.11"' <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu 0.0.11)."
 curl -fsS "http://127.0.0.1:$API_PORT/api/snapshots" >/dev/null || fail "La route API /api/snapshots ne répond pas."
 curl -fsS "http://127.0.0.1:$API_PORT/api/analysis" >/dev/null || fail "La route API /api/analysis ne répond pas."
 curl -kfsS --connect-timeout 10 "https://$DOMAIN/api/snapshots" >/dev/null || fail "Caddy ne route pas /api/* vers Vigie."
@@ -144,7 +144,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null
 
 cat <<DONE
 
-Vigie v0.0.10 est installée.
+Vigie v0.0.11 est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 

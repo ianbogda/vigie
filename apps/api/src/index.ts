@@ -10,7 +10,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.10';
+const VERSION = '0.0.11';
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
@@ -156,9 +156,15 @@ function parseBudgetLis(buf: Buffer) {
   if(!rows.length)throw new Error('Export Budget Op@le reconnu mais aucune ligne budgétaire exploitable.');
   return {type:'budget',entity,establishment,snapshotDate,rows};
 }
-function parseFdr(buf: Buffer) {
+function parseOpaleCsv(buf: Buffer) {
   const text=buf.toString('utf8').replace(/^\uFEFF/,'');
-  const records:any[]=parseCsv(text,{columns:true,delimiter:';',bom:true,skip_empty_lines:true,relax_column_count:true,trim:true});
+  return parseCsv(text,{
+    columns:true, delimiter:';', bom:true, skip_empty_lines:true,
+    relax_column_count:true, relax_quotes:true, trim:false, group_columns_by_name:true
+  }) as any[];
+}
+function parseFdr(buf: Buffer) {
+  const records:any[]=parseOpaleCsv(buf);
   if(!records.length) throw new Error('FDR vide.');
   const keys=Object.keys(records[0]);
   if(!keys.includes('Exercice') || !keys.includes('Montant du FDR') || !keys.includes('Définitif ?')) throw new Error('CSV non reconnu comme FDR Op@le.');
@@ -177,8 +183,7 @@ function detectCsvType(buf: Buffer) {
   return 'unknown';
 }
 function parseClca(buf: Buffer) {
-  const text=buf.toString('utf8').replace(/^\uFEFF/,'');
-  const records:any[]=parseCsv(text,{columns:true,delimiter:';',bom:true,skip_empty_lines:true,relax_column_count:true,relax_quotes:true,trim:false,group_columns_by_name:true});
+  const records:any[]=parseOpaleCsv(buf);
   if(!records.length)throw new Error('CLCA vide.');
   const keys=Object.keys(records[0]);
   if(!keys.includes('N° commande') || !keys.includes('Fournisseur') || !keys.includes('Prix commandé HT')) throw new Error("CSV non reconnu comme CLCA Op@le.");

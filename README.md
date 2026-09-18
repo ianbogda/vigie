@@ -1,4 +1,4 @@
-# Vigie — v0.0.10
+# Vigie — v0.0.11
 
 Vigie est le cockpit de détection budgétaire, financière et comptable d'EPLE Tools.
 
@@ -16,3 +16,10 @@ Vigie est le cockpit de détection budgétaire, financière et comptable d'EPLE 
 Le moteur est déterministe et traçable. Un signal n'est pas un diagnostic et une donnée absente n'est jamais assimilée à zéro. Les comparaisons FDR signalent le caractère provisoire/définitif.
 
 CLCV ventes reste en attente d'un export non vide pour valider son mapping réel.
+
+
+## v0.0.11
+- correction du parseur FDR pour les valeurs Op@le de type `=("…")` ;
+- parseur CSV Op@le commun et tolérant pour FDR/CLCA ;
+- correction JSX `>` ;
+- animation discrète du tableau de bord d’accueil (entrée progressive, signaux, barre d’exécution, survol), avec respect de `prefers-reduced-motion`.
