@@ -1,1 +1,1 @@
-{"name":"@vigie/api","version":"0.0.1","type":"module","scripts":{"dev":"tsx watch src/index.ts","build":"tsc -p tsconfig.json"},"dependencies":{"@fastify/cors":"^10.0.0","fastify":"^5.0.0"},"devDependencies":{"tsx":"^4.19.0","typescript":"^5.6.0","@types/node":"^22.0.0"}}
+{"name":"@vigie/api","version":"0.0.2","type":"module","scripts":{"dev":"tsx watch src/index.ts","build":"tsc -p tsconfig.json"},"dependencies":{"@fastify/cors":"^10.0.0","fastify":"^5.0.0"},"devDependencies":{"tsx":"^4.19.0","typescript":"^5.6.0","@types/node":"^22.0.0"}}

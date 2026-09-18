@@ -1,29 +1,16 @@
-# Vigie — EPLE Tools · v0.0.1
+# Vigie — EPLE Tools — v0.0.2
 
 **Vigie** est le cockpit de détection budgétaire, financière et comptable d'EPLE Tools.
 
-Objectif : repérer rapidement les situations qui nécessitent une investigation, sans recréer Op@le.
-
-## V0.0.1
-- maquette React fonctionnelle ;
-- API Fastify ;
+Cette itération verrouille l'UX avant branchement des exports Op@le :
 - synthèse multi-EPLE ;
-- radar Budget / Trésorerie / Recouvrement / Fournisseurs / Comptabilité générale ;
-- liste d'alertes ;
-- états `ok`, `watch`, `alert` ;
-- architecture prête pour les importeurs V1.
+- quatre états explicites : action requise, à examiner, aucun signal, données insuffisantes ;
+- fraîcheur des données ;
+- investigation EPLE ;
+- signaux prioritaires ;
+- amorce des vues métier ;
+- workflow d'import Balance, Budget/Exécution, Achats/Engagements et Créances.
 
-Les données affichées dans cette version sont fictives. La persistance PostgreSQL et les importeurs Op@le arrivent dans les itérations suivantes.
+Les données sont fictives en v0.0.2. La prochaine étape branche PostgreSQL, les snapshots et les premiers importeurs.
 
-## Démarrage
-Prérequis : Node.js 22+.
-
-```bash
-npm install
-npm run dev
-```
-
-Web : http://localhost:5173 — API : http://localhost:3211 — Santé : http://localhost:3211/health
-
-## Périmètre V1 cible
-Balance, Budget/Exécution, Achats/Engagements, Créances → normalisation → historisation → indicateurs → règles → alertes → investigation.
+URL cible : `https://vigie.epele-tools.fr`

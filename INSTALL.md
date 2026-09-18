@@ -1,12 +1,34 @@
-# Installation développeur
+# Installation — Vigie v0.0.2
+
+## Développement
 
 ```bash
-unzip vigie-eple-v0.0.1.zip
-cd vigie-eple-v0.0.1
 npm install
 npm run dev
 ```
 
-Pour compiler : `npm run build`.
+Web : port Vite par défaut. API : `3211`.
 
-Cette v0.0.1 n'installe pas encore PostgreSQL : l'API sert volontairement un jeu de démonstration afin de figer le contrat UI/API avant les importeurs.
+## Production
+
+```bash
+npm install
+npm run build
+```
+
+Servir `apps/web/dist` sur `https://vigie.epele-tools.fr` et proxifier `/api/*` vers l'API Fastify sur `127.0.0.1:3211` lorsque l'API sera consommée par le front.
+
+Exemple Caddy :
+
+```caddy
+vigie.epele-tools.fr {
+    handle /api/* {
+        reverse_proxy 127.0.0.1:3211
+    }
+    handle {
+        root * /opt/vigie/apps/web/dist
+        try_files {path} /index.html
+        file_server
+    }
+}
+```
