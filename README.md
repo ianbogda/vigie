@@ -1,28 +1,18 @@
-# Vigie — v0.0.6
+# Vigie — v0.0.7
 
-Module EPLE Tools de détection rapide des difficultés budgétaires et comptables.
+Cockpit financier et comptable de la suite EPLE Tools.
 
 ## Cette itération
 
-Premier flux Op@le réel : **balance → contrôle → snapshot daté → analyse → alertes de comptabilité générale**.
+- import **natif recommandé** des balances Op@le `.lis` ;
+- compatibilité `.xlsx` et `.csv` ;
+- lecture tolérante du format `.lis` observé (Windows-1252 et intitulés contenant des guillemets non échappés) ;
+- identification de `entity` et `entityLabel` ;
+- conservation des 8 valeurs Op@le : cumuls antérieurs débit/crédit, période débit/crédit, soldes débit/crédit ;
+- snapshot PostgreSQL daté ;
+- premières alertes de comptabilité générale ;
+- correction du typage ExcelJS de la v0.0.6 ;
+- migrations SQL idempotentes ;
+- domaine : `https://vigie.eple-tools.fr`.
 
-- import XLSX/XLS/CSV ;
-- reconnaissance tolérante des colonnes compte/libellé/solde ou débit/crédit ;
-- rejet explicite d'un fichier non reconnu ;
-- stockage PostgreSQL du snapshot et de chaque ligne ;
-- conservation de l'historique des imports ;
-- règles initiales : 471/472, 585, sens inhabituels 401/404 et 411/416 ;
-- restitution immédiate des alertes après import ;
-- historique des snapshots dans l'interface.
-
-Les règles sont volontairement prudentes : elles signalent un point à examiner et ne constituent pas à elles seules un diagnostic comptable.
-
-Production cible : `https://vigie.eple-tools.fr`.
-
-## Sécurisation des imports — v0.0.6
-
-- SheetJS (`xlsx`) supprimé ;
-- `.xlsx` lu avec ExcelJS et `.csv` avec `csv-parse` ;
-- `.xls` refusé explicitement ;
-- limite de 15 Mo par fichier, 100 000 lignes et 20 feuilles ;
-- correction de la réponse HTTP 404 sur les snapshots absents.
+Le `.lis` fourni pour validation n'est pas supposé être un JSON strict : Vigie utilise un parseur ciblé sur la structure de balance Op@le afin de tolérer les guillemets présents dans certains intitulés de comptes.

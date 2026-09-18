@@ -52,7 +52,7 @@ DATABASE_URL=postgresql://vigie:$DB_PASSWORD@127.0.0.1:5432/vigie
 ENV
 chmod 600 /etc/vigie.env
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='vigie'" | grep -q 1 || sudo -u postgres createdb -O vigie vigie
-sudo -u postgres psql -d vigie -f "$APP_DIR/deploy/sql/001_balance.sql"
+for sql in "$APP_DIR"/deploy/sql/*.sql; do sudo -u postgres psql -d vigie -f "$sql"; done
 sudo -u postgres psql -d vigie -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO vigie; GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO vigie;"
 
 log "Installation du service API"
@@ -137,7 +137,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null
 
 cat <<DONE
 
-Vigie v0.0.5 est installée.
+Vigie v0.0.7 est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 
