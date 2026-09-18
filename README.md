@@ -1,20 +1,20 @@
-# Vigie — EPLE Tools — v0.0.3
+# Vigie — v0.0.5
 
-**Vigie** est le cockpit de détection budgétaire, financière et comptable d'EPLE Tools.
+Module EPLE Tools de détection rapide des difficultés budgétaires et comptables.
 
-Cette itération verrouille l'UX avant branchement des exports Op@le :
-- synthèse multi-EPLE ;
-- quatre états explicites : action requise, à examiner, aucun signal, données insuffisantes ;
-- fraîcheur des données ;
-- investigation EPLE ;
-- signaux prioritaires ;
-- amorce des vues métier ;
-- workflow d'import Balance, Budget/Exécution, Achats/Engagements et Créances.
+## Cette itération
 
-Les données sont fictives en v0.0.3. La prochaine étape branche PostgreSQL, les snapshots et les premiers importeurs.
+Premier flux Op@le réel : **balance → contrôle → snapshot daté → analyse → alertes de comptabilité générale**.
 
-URL cible : `https://vigie.eple-tools.fr`
+- import XLSX/XLS/CSV ;
+- reconnaissance tolérante des colonnes compte/libellé/solde ou débit/crédit ;
+- rejet explicite d'un fichier non reconnu ;
+- stockage PostgreSQL du snapshot et de chaque ligne ;
+- conservation de l'historique des imports ;
+- règles initiales : 471/472, 585, sens inhabituels 401/404 et 411/416 ;
+- restitution immédiate des alertes après import ;
+- historique des snapshots dans l'interface.
 
-## Installation serveur
+Les règles sont volontairement prudentes : elles signalent un point à examiner et ne constituent pas à elles seules un diagnostic comptable.
 
-La v0.0.3 ajoute `deploy/install-debian13.sh` : installation automatisée sur Debian 13, service systemd, Caddy et certificat TLS Let's Encrypt avec renouvellement automatique. Voir `INSTALL.md`.
+Production cible : `https://vigie.eple-tools.fr`.

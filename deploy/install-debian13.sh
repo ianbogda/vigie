@@ -15,7 +15,7 @@ fail(){ printf '\n\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 log "Installation des prérequis"
 apt-get update
-apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https rsync dnsutils openssl
+apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https rsync dnsutils openssl postgresql postgresql-client
 
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -p 'Number(process.versions.node.split(`.`)[0])' 2>/dev/null || echo 0)" -lt 22 ]]; then
   log "Installation de Node.js 22"
@@ -42,6 +42,19 @@ cd "$APP_DIR"
 sudo -u "$APP_USER" npm install
 sudo -u "$APP_USER" npm run build
 
+log "Initialisation PostgreSQL"
+systemctl enable --now postgresql
+DB_PASSWORD="$(openssl rand -hex 24)"
+if [[ -f /etc/vigie.env ]]; then DB_PASSWORD="$(sed -n 's#^DATABASE_URL=postgresql://vigie:\([^@]*\)@.*#\1#p' /etc/vigie.env)"; fi
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='vigie'" | grep -q 1 || sudo -u postgres psql -c "CREATE USER vigie WITH PASSWORD '$DB_PASSWORD';"
+cat > /etc/vigie.env <<ENV
+DATABASE_URL=postgresql://vigie:$DB_PASSWORD@127.0.0.1:5432/vigie
+ENV
+chmod 600 /etc/vigie.env
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='vigie'" | grep -q 1 || sudo -u postgres createdb -O vigie vigie
+sudo -u postgres psql -d vigie -f "$APP_DIR/deploy/sql/001_balance.sql"
+sudo -u postgres psql -d vigie -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO vigie; GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO vigie;"
+
 log "Installation du service API"
 cat > /etc/systemd/system/vigie.service <<SERVICE
 [Unit]
@@ -55,6 +68,7 @@ Group=$APP_USER
 WorkingDirectory=$APP_DIR/apps/api
 Environment=NODE_ENV=production
 Environment=PORT=$API_PORT
+EnvironmentFile=/etc/vigie.env
 ExecStart=/usr/bin/node $APP_DIR/apps/api/dist/index.js
 Restart=on-failure
 RestartSec=5
@@ -123,7 +137,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null
 
 cat <<DONE
 
-Vigie v0.0.4 est installée.
+Vigie v0.0.5 est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 

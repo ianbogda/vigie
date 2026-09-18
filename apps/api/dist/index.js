@@ -1,19 +1,89 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
+import pg from 'pg';
+import * as XLSX from 'xlsx';
+const { Pool } = pg;
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
-const establishments = [
-    { id: 1, name: 'Collège A', budget: 'ok', treasury: 'watch', recovery: 'ok', suppliers: 'ok', accounting: 'ok', trend: 'stable' },
-    { id: 2, name: 'Collège B', budget: 'alert', treasury: 'watch', recovery: 'alert', suppliers: 'ok', accounting: 'watch', trend: 'down' },
-    { id: 3, name: 'LP C', budget: 'ok', treasury: 'ok', recovery: 'ok', suppliers: 'alert', accounting: 'alert', trend: 'down' },
-    { id: 4, name: 'LPO D', budget: 'watch', treasury: 'ok', recovery: 'watch', suppliers: 'ok', accounting: 'ok', trend: 'stable' }
-];
-const alerts = [
-    { level: 'alert', eple: 'Collège B', domain: 'Budget', message: 'Projection de dépassement SRH : 18 400 €' },
-    { level: 'alert', eple: 'LP C', domain: 'Comptabilité', message: 'Compte 4718 : 24 300 € à régulariser' },
-    { level: 'watch', eple: 'Collège A', domain: 'Recouvrement', message: '3 créances > 90 jours : 7 820 €' },
-    { level: 'watch', eple: 'LPO D', domain: 'Fournisseurs', message: '14 factures non payées depuis > 30 jours' }
-];
-app.get('/health', () => ({ ok: true, version: '0.0.1' }));
-app.get('/api/dashboard', () => ({ updatedAt: new Date().toISOString(), kpis: { eple: 8, alerts: 3, treasury: 2800000, execution: 0.96 }, establishments, alerts }));
+await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://vigie:vigie@127.0.0.1:5432/vigie' });
+const num = (v) => { if (typeof v === 'number')
+    return v; const n = Number(String(v ?? '').replace(/\s/g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+const norm = (s) => String(s ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+function pick(row, names) { const map = Object.fromEntries(Object.keys(row).map(k => [norm(k), k])); for (const n of names) {
+    const k = map[norm(n)];
+    if (k)
+        return row[k];
+} return undefined; }
+function parseBalance(buf) {
+    const wb = XLSX.read(buf, { type: 'buffer', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (!rows.length)
+        throw new Error('Le fichier ne contient aucune ligne exploitable.');
+    const parsed = rows.map((r, i) => { const account = String(pick(r, ['compte', 'numero compte', 'n° compte', 'num compte', 'compte general']) ?? '').replace(/\s/g, ''); const label = String(pick(r, ['libelle', 'libellé', 'libelle compte', 'intitule', 'intitulé']) ?? ''); let debit = num(pick(r, ['solde debiteur', 'solde débiteur', 'debit', 'débit'])); let credit = num(pick(r, ['solde crediteur', 'solde créditeur', 'credit', 'crédit'])); const balance = pick(r, ['solde', 'solde final']); if (balance !== undefined && !debit && !credit) {
+        const b = num(balance);
+        debit = Math.max(b, 0);
+        credit = Math.max(-b, 0);
+    } return { line: i + 2, account, label, debit, credit, net: debit - credit }; }).filter(x => /^\d{2,}/.test(x.account));
+    if (!parsed.length)
+        throw new Error('Colonnes non reconnues. Vigie attend au minimum un compte et un solde (ou débit/crédit).');
+    return { sheet: wb.SheetNames[0], sourceRows: rows.length, rows: parsed };
+}
+function analyse(rows) {
+    const alerts = [];
+    const add = (code, level, title, detail, account, amount) => alerts.push({ code, level, title, detail, account, amount });
+    for (const r of rows) {
+        const a = r.account, abs = Math.abs(r.net);
+        if (abs < 0.005)
+            continue;
+        if (/^471|^472/.test(a))
+            add('CG-ATTENTE', 'watch', 'Compte d’attente non soldé', `${a} ${r.label} présente un solde de ${r.net.toFixed(2)} € à examiner.`, a, r.net);
+        if (/^585/.test(a))
+            add('CG-585', 'alert', 'Compte 585 non soldé', `Le compte ${a} présente un solde de ${r.net.toFixed(2)} €.`, a, r.net);
+        if (/^401|^404/.test(a) && r.net > 0)
+            add('CG-FOURN-SENS', 'watch', 'Solde fournisseur de sens inhabituel', `Le compte ${a} présente un solde débiteur de ${r.net.toFixed(2)} €.`, a, r.net);
+        if (/^411|^416/.test(a) && r.net < 0)
+            add('CG-CLIENT-SENS', 'watch', 'Solde de créance de sens inhabituel', `Le compte ${a} présente un solde créditeur de ${Math.abs(r.net).toFixed(2)} €.`, a, r.net);
+    }
+    return alerts.sort((a, b) => (a.level === 'alert' ? 0 : 1) - (b.level === 'alert' ? 0 : 1) || Math.abs(b.amount) - Math.abs(a.amount));
+}
+app.get('/health', () => ({ ok: true, version: '0.0.5' }));
+app.get('/api/snapshots', async () => ({ snapshots: (await pool.query('select id, establishment_name, snapshot_date, source_filename, row_count, created_at from balance_snapshots order by snapshot_date desc, created_at desc limit 50')).rows }));
+app.get('/api/snapshots/:id', async (req) => { const s = (await pool.query('select * from balance_snapshots where id=$1', [req.params.id])).rows[0]; if (!s)
+    return app.httpErrors?.notFound?.() || { error: 'Introuvable' }; const alerts = (await pool.query('select * from accounting_alerts where snapshot_id=$1 order by case severity when \'alert\' then 0 else 1 end, abs(amount) desc', [req.params.id])).rows; return { snapshot: s, alerts }; });
+app.post('/api/import/balance', async (req, reply) => { try {
+    const file = await req.file();
+    if (!file)
+        return reply.code(400).send({ error: 'Fichier manquant' });
+    const fields = file.fields || {};
+    const establishment = String(fields.establishment?.value || 'Établissement non renseigné');
+    const date = String(fields.snapshotDate?.value || new Date().toISOString().slice(0, 10));
+    const buf = await file.toBuffer();
+    const p = parseBalance(buf);
+    const alerts = analyse(p.rows);
+    const client = await pool.connect();
+    try {
+        await client.query('begin');
+        const s = (await client.query('insert into balance_snapshots(establishment_name,snapshot_date,source_filename,sheet_name,row_count) values($1,$2,$3,$4,$5) returning *', [establishment, date, file.filename, p.sheet, p.rows.length])).rows[0];
+        for (const r of p.rows)
+            await client.query('insert into balance_lines(snapshot_id,line_no,account,label,debit,credit,net) values($1,$2,$3,$4,$5,$6,$7)', [s.id, r.line, r.account, r.label, r.debit, r.credit, r.net]);
+        for (const a of alerts)
+            await client.query('insert into accounting_alerts(snapshot_id,rule_code,severity,title,detail,account,amount) values($1,$2,$3,$4,$5,$6,$7)', [s.id, a.code, a.level, a.title, a.detail, a.account, a.amount]);
+        await client.query('commit');
+        return { ok: true, snapshot: s, control: { sourceRows: p.sourceRows, importedRows: p.rows.length, rejectedRows: p.sourceRows - p.rows.length }, alerts };
+    }
+    catch (e) {
+        await client.query('rollback');
+        throw e;
+    }
+    finally {
+        client.release();
+    }
+}
+catch (e) {
+    req.log.error(e);
+    return reply.code(400).send({ error: e.message || 'Import impossible' });
+} });
 app.listen({ port: Number(process.env.PORT || 3211), host: '0.0.0.0' });
