@@ -1,4 +1,4 @@
-# Vigie — v0.0.5
+# Vigie — v0.0.6
 
 Module EPLE Tools de détection rapide des difficultés budgétaires et comptables.
 
@@ -18,3 +18,11 @@ Premier flux Op@le réel : **balance → contrôle → snapshot daté → analys
 Les règles sont volontairement prudentes : elles signalent un point à examiner et ne constituent pas à elles seules un diagnostic comptable.
 
 Production cible : `https://vigie.eple-tools.fr`.
+
+## Sécurisation des imports — v0.0.6
+
+- SheetJS (`xlsx`) supprimé ;
+- `.xlsx` lu avec ExcelJS et `.csv` avec `csv-parse` ;
+- `.xls` refusé explicitement ;
+- limite de 15 Mo par fichier, 100 000 lignes et 20 feuilles ;
+- correction de la réponse HTTP 404 sur les snapshots absents.

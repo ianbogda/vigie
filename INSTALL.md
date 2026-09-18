@@ -1,4 +1,4 @@
-# Installation — Vigie v0.0.5
+# Installation — Vigie v0.0.6
 
 Sur Debian 13, après extraction :
 
