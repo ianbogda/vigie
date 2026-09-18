@@ -1,18 +1,17 @@
-# Installation — Vigie v0.0.12
+# Installation — Vigie v0.0.13
 
-Sur Debian 13 :
+Sur Debian 13, depuis la racine du projet :
 
 ```bash
 sudo bash deploy/install-debian13.sh
 ```
 
-L'installateur construit l'API et le front, applique les migrations, redémarre `vigie`, configure Caddy/HTTPS et contrôle `/health`, `/api/snapshots`, `/api/analysis` et `/api/dashboard`.
+Le script installe/met à jour PostgreSQL, applique toutes les migrations SQL, construit l'API et le Web, redémarre `vigie`, configure Caddy et vérifie `/health` et `/api/dashboard`.
 
 Contrôle manuel :
 
 ```bash
 curl http://127.0.0.1:3211/health
 curl http://127.0.0.1:3211/api/dashboard
+sudo systemctl status vigie --no-pager
 ```
-
-`/health` doit annoncer `0.0.12`.

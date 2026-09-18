@@ -1,22 +1,35 @@
-# Vigie — v0.0.12
+# Vigie EPLE — v0.0.13 — cockpit multi-établissements
 
-Cockpit financier et comptable EPLE alimenté par les exports Op@le.
+Vigie devient un cockpit financier et comptable multi-EPLE : observer, analyser et anticiper à partir des situations Op@le historisées.
 
-## Nouveautés v0.0.12
+## Cette itération
 
-- tableau de bord d'accueil alimenté par les **données réellement importées** ;
-- suppression des EPLE, KPI, alertes et montants fictifs de la synthèse ;
-- nouveau endpoint `GET /api/dashboard` multi-EPLE ;
-- radar calculé à partir des derniers snapshots Balance, Budget, CLCA et FDR ;
-- signaux prioritaires issus des règles déterministes ;
-- agrégation réelle de l'exécution budgétaire ;
-- fraîcheur des sources et sources manquantes visibles ;
-- tiroir d'investigation avec signaux, règles et traçabilité des imports ;
-- historique FDR visible par établissement ;
-- import FDR/CLCA conservant le parseur CSV Op@le tolérant (`relax_quotes`).
+- accueil refondu selon le visuel validé, palette Bootstrap 5.3 apaisée ;
+- sélecteur **Vue agence / établissement** ;
+- trajectoire budgétaire EPLE saisonnière ;
+- correction du calcul budgétaire : **engagé / montant évaluatif**, sans double comptage du réalisé ;
+- disponible = montant évaluatif − engagé ;
+- signaux dépliables **Pourquoi ce signal ?** avec données, règle, lecture et source ;
+- structure d'analyse financière permanente : constaté / engagé / attendu / estimé ;
+- calendrier de gestion EPLE : mise en route, préparation de rentrée, fermeture estivale, atterrissage, clôture ;
+- intégration PCIF non intrusive : table `pcif_context` et API de synthèse (maîtrise, risques majeurs, actions ouvertes). Aucune donnée PCIF fictive n'est créée ;
+- imports existants conservés : Balance/EBLC, Budget, CLCA, FDR.
 
-## Limite connue
+## PCIF
 
-Le recouvrement reste en **données insuffisantes** tant qu'une source CLCV/créances n'est pas intégrée. Vigie ne transforme jamais cette absence en valeur zéro ou en état vert.
+Vigie n'embarque pas les 267 questions du PCIF. Il ne consomme qu'une synthèse utile au diagnostic financier : niveau de maîtrise, risques majeurs et actions ouvertes. Cela évite de dupliquer PCIF Académie. Le branchement automatique à son API pourra remplacer l'alimentation de `pcif_context` lorsque le contrat d'API sera stabilisé.
 
-Voir `INSTALL.md` pour le déploiement Debian 13.
+## Déploiement
+
+```bash
+sudo bash deploy/install-debian13.sh
+```
+
+Puis contrôler :
+
+```bash
+curl http://127.0.0.1:3211/health
+curl http://127.0.0.1:3211/api/dashboard
+```
+
+`/health` doit annoncer `0.0.13`.

@@ -10,7 +10,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.12';
+const VERSION = '0.0.13';
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
@@ -206,6 +206,21 @@ function analyse(rows: any[]) {
   }
   return alerts.sort((a,b)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount)-Math.abs(a.amount));
 }
+function budgetTrajectoryTarget(dateValue:any){
+  const d=new Date(dateValue||Date.now()); const y=d.getUTCFullYear();
+  const points=[[Date.UTC(y,0,1),.05],[Date.UTC(y,2,31),.25],[Date.UTC(y,5,30),.62],[Date.UTC(y,7,31),.78],[Date.UTC(y,10,1),.95],[Date.UTC(y,11,31),1]];
+  const t=d.getTime(); if(t<=points[0][0])return points[0][1]; if(t>=points.at(-1)![0])return 1;
+  for(let i=1;i<points.length;i++){if(t<=points[i][0]){const[a,va]=points[i-1], [b,vb]=points[i]; return va+(vb-va)*((t-a)/(b-a));}}
+  return 1;
+}
+function budgetSignal(metrics:any,snapshotDate:any){
+  const budget=Number(metrics.budget||0), committed=Number(metrics.committed||0), accounted=Number(metrics.accounted||0), available=Number(metrics.available||0);
+  if(!budget)return null; const rate=committed/budget, target=budgetTrajectoryTarget(snapshotDate), gap=rate-target;
+  const evidence=[{label:'Montant évaluatif',value:budget},{label:'Engagé juridiquement',value:committed},{label:'dont réalisé',value:accounted},{label:'Disponible',value:available},{label:"Taux d'engagement",value:rate,format:'percent'},{label:'Trajectoire attendue',value:target,format:'percent'}];
+  if(available<-.01)return {code:'BUD-NEG',level:'alert',domain:'Budget',title:'Disponible budgétaire négatif',detail:`Le disponible ressort à ${available.toFixed(2)} €.`,evidence,condition:'Disponible < 0 €',interpretation:'Les engagements dépassent le montant évaluatif agrégé ; le périmètre doit être vérifié.',source:'Budget Op@le'};
+  if(gap<-.10)return {code:'BUD-TRAJECTORY',level:'watch',domain:'Budget',title:"Engagements en retrait sur la trajectoire",detail:`${(rate*100).toFixed(1)} % engagés pour une trajectoire de référence à ${(target*100).toFixed(1)} %.`,evidence,condition:'Écart à la trajectoire < -10 points',interpretation:"Le niveau d'engagement est inférieur à la trajectoire EPLE de référence. Le contexte et les besoins restant à engager sont à examiner.",source:'Budget Op@le'};
+  return null;
+}
 app.get('/health',()=>({ok:true,version:VERSION}));
 
 app.get('/api/imports',async()=>({
@@ -234,9 +249,9 @@ app.get('/api/analysis', async () => {
  if(latestBudget){
   const q=(await pool.query('select coalesce(sum(budget),0) budget,coalesce(sum(committed),0) committed,coalesce(sum(accounted),0) accounted,coalesce(sum(in_progress),0) in_progress,coalesce(sum(available),0) available from budget_lines where snapshot_id=$1',[latestBudget.id])).rows[0];
   Object.assign(metrics,{budget:{...q,snapshotDate:latestBudget.snapshot_date,establishment:latestBudget.establishment_name}});
-  const b=Number(q.budget), used=Number(q.accounted)+Number(q.committed)+Number(q.in_progress), avail=Number(q.available);
-  if(b>0){const rate=used/b; metrics.budget.executionRate=rate; if(rate>=.95)signals.push({code:'BUD-095',level:'alert',domain:'Budget',title:'Crédits fortement mobilisés',detail:`${(rate*100).toFixed(1)} % des crédits sont réalisés, engagés ou en cours.`,amount:used}); else if(rate>=.85)signals.push({code:'BUD-085',level:'watch',domain:'Budget',title:'Consommation budgétaire à examiner',detail:`${(rate*100).toFixed(1)} % des crédits sont réalisés, engagés ou en cours.`,amount:used});}
-  if(avail<0)signals.push({code:'BUD-NEG',level:'alert',domain:'Budget',title:'Disponible budgétaire négatif',detail:`Le disponible agrégé ressort à ${avail.toFixed(2)} €.`,amount:avail});
+  const b=Number(q.budget), committed=Number(q.committed), avail=Number(q.available);
+  if(b>0){metrics.budget.executionRate=committed/b;metrics.budget.engagementRate=committed/b;metrics.budget.trajectoryTarget=budgetTrajectoryTarget(latestBudget.snapshot_date);const sig=budgetSignal(q,latestBudget.snapshot_date);if(sig)signals.push(sig);}
+  metrics.budget.availableRate=b?avail/b:null;
  }
  if(latestPurchase){
   const q=(await pool.query(`select count(*)::int lines,coalesce(sum(abs(invoice_amount)),0) invoiced,coalesce(sum(abs(ordered_price*quantity)),0) ordered,coalesce(sum(case when order_date < current_date-60 and abs(invoice_balance_quantity)>.0001 then 1 else 0 end),0)::int old_uninvoiced,coalesce(sum(case when receipt_date is not null and abs(invoice_balance_quantity)>.0001 then 1 else 0 end),0)::int received_uninvoiced from purchase_lines where snapshot_id=$1`,[latestPurchase.id])).rows[0];
@@ -280,9 +295,8 @@ app.get('/api/dashboard', async () => {
       const q=(await pool.query(`select coalesce(sum(budget),0) budget,coalesce(sum(committed),0) committed,coalesce(sum(accounted),0) accounted,coalesce(sum(in_progress),0) in_progress,coalesce(sum(available),0) available from budget_lines where snapshot_id=$1`,[e.sources.budget.id])).rows[0];
       const m={budget:Number(q.budget),committed:Number(q.committed),accounted:Number(q.accounted),inProgress:Number(q.in_progress),available:Number(q.available)}; e.budgetMetrics=m;
       totalBudget+=m.budget;totalAvailable+=m.available;totalAccounted+=m.accounted;totalCommitted+=m.committed;totalInProgress+=m.inProgress;
-      const rate=m.budget?(m.accounted+m.committed+m.inProgress)/m.budget:null;
-      if(m.available<-.01)e.signals.push({code:'BUD-NEG',level:'alert',domain:'Budget',title:'Disponible budgétaire négatif',detail:`Disponible agrégé : ${m.available.toFixed(2)} €`,amount:m.available});
-      else if(rate!==null&&rate>=.9)e.signals.push({code:'BUD-HIGH',level:'watch',domain:'Budget',title:'Crédits fortement mobilisés',detail:`${(rate*100).toFixed(1)} % du budget est réalisé, engagé ou en cours.`,amount:m.budget-m.available});
+      const rate=m.budget?m.committed/m.budget:null; e.budgetMetrics.engagementRate=rate;e.budgetMetrics.trajectoryTarget=budgetTrajectoryTarget(e.sources.budget.snapshot_date);
+      const bs=budgetSignal(m,e.sources.budget.snapshot_date);if(bs)e.signals.push(bs);
       states.budget=severity(e.signals.filter((x:any)=>x.domain==='Budget'));
     }
     if(e.sources.purchases){
@@ -293,7 +307,7 @@ app.get('/api/dashboard', async () => {
     }
     if(e.sources.balance){
       const a=(await pool.query(`select severity,rule_code,title,detail,account,amount from accounting_alerts where snapshot_id=$1 order by case severity when 'alert' then 0 else 1 end,abs(amount) desc limit 20`,[e.sources.balance.id])).rows;
-      for(const x of a)e.signals.push({code:x.rule_code,level:x.severity,domain:'Comptabilité générale',title:x.title,detail:x.detail,account:x.account,amount:Number(x.amount)});
+      for(const x of a)e.signals.push({code:x.rule_code,level:x.severity,domain:'Comptabilité générale',title:x.title,detail:x.detail,account:x.account,amount:Number(x.amount),evidence:[{label:'Compte',value:x.account},{label:'Solde net',value:Number(x.amount)}],condition:x.rule_code==='CG-585'?'Solde du compte 585 différent de zéro':'Solde non nul sur un compte surveillé',interpretation:'Signal à examiner et, le cas échéant, à apurer. Il ne préjuge pas à lui seul d’une anomalie.',source:'EBLC / balance Op@le'});
       states.accounting=a.length?severity(a.map((x:any)=>({level:x.severity}))):'ok';
     }
     let trend='stable';
@@ -308,11 +322,15 @@ app.get('/api/dashboard', async () => {
     e.signals.sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
     establishments.push({id:e.key,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[]});
   }
+  try{const pcif=(await pool.query('select establishment_key,campaign_label,mastery_level,open_actions,major_risks,updated_at from pcif_context')).rows;for(const e of establishments){e.pcif=pcif.find((p:any)=>p.establishment_key===e.id)||null}}catch{}
   const signals=establishments.flatMap(e=>e.signals.map((s:any)=>({...s,establishment:e.name,establishmentId:e.id}))).sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
   const actionRequired=signals.filter((s:any)=>s.level==='alert').length, watch=signals.filter((s:any)=>s.level==='watch').length;
   const stale=establishments.reduce((n,e)=>n+e.staleSources.length,0);
   return {version:VERSION,generatedAt:new Date().toISOString(),kpis:{establishments:establishments.length,actionRequired,watch,stale,totalBudget,totalAvailable,totalAccounted,totalCommitted,totalInProgress},establishments,signals:signals.slice(0,50)};
 });
+
+app.get('/api/pcif-context/:establishmentId',async(req:any)=>{try{return {context:(await pool.query('select * from pcif_context where establishment_key=$1',[req.params.establishmentId])).rows[0]||null}}catch{return {context:null}}});
+app.post('/api/pcif-context/:establishmentId',async(req:any,reply:any)=>{const b=req.body||{};try{const q=await pool.query(`insert into pcif_context(establishment_key,campaign_label,mastery_level,open_actions,major_risks,source_url,updated_at) values($1,$2,$3,$4,$5,$6,now()) on conflict(establishment_key) do update set campaign_label=excluded.campaign_label,mastery_level=excluded.mastery_level,open_actions=excluded.open_actions,major_risks=excluded.major_risks,source_url=excluded.source_url,updated_at=now() returning *`,[req.params.establishmentId,b.campaignLabel||null,b.masteryLevel??null,b.openActions??0,b.majorRisks??0,b.sourceUrl||null]);return {ok:true,context:q.rows[0]}}catch(e:any){return reply.code(400).send({error:e.message})}});
 
 app.get('/api/snapshots',async()=>({snapshots:(await pool.query('select id, establishment_name, snapshot_date, source_filename, row_count, created_at from balance_snapshots order by snapshot_date desc, created_at desc limit 50')).rows}));
 app.get('/api/snapshots/:id', async (req:any, reply) => {

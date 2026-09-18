@@ -1,6 +1,6 @@
 {
   "name": "@vigie/web",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,8 @@
     "typescript": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest"
+    "lucide-react": "latest",
+    "bootstrap": "^5.3.8"
   },
   "devDependencies": {
     "@types/react": "latest",
