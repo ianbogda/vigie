@@ -10,7 +10,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.13';
+const VERSION = '0.0.14';
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });

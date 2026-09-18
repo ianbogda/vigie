@@ -1,4 +1,4 @@
-# Installation — Vigie v0.0.13
+# Installation — Vigie v0.0.14
 
 Sur Debian 13, depuis la racine du projet :
 
