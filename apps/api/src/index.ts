@@ -10,7 +10,41 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.14';
+const VERSION = '0.0.15';
+const PCIF_BASE_URL = String(process.env.PCIF_BASE_URL || '').replace(/\/$/, '');
+const PCIF_API_KEY = String(process.env.PCIF_API_KEY || '');
+const PCIF_CACHE_MINUTES = Math.max(1, Number(process.env.PCIF_CACHE_MINUTES || 10));
+const uaiOf = (...values: unknown[]) => {
+  for (const value of values) {
+    const match = String(value ?? '').toUpperCase().match(/\b0?([0-9]{7}[A-Z])\b/);
+    if (match) return match[0];
+  }
+  return null;
+};
+
+async function syncPcifSummaries(uais: string[]) {
+  const wanted = [...new Set(uais.filter(Boolean))];
+  if (!PCIF_BASE_URL || !PCIF_API_KEY || !wanted.length) return { configured:false, synced:0, skipped:wanted.length };
+  const response = await fetch(`${PCIF_BASE_URL}/api/integrations/vigie/summaries`, {
+    method:'POST', headers:{'content-type':'application/json','authorization':`Bearer ${PCIF_API_KEY}`},
+    body:JSON.stringify({uais:wanted}), signal:AbortSignal.timeout(6000)
+  });
+  if (!response.ok) throw new Error(`PCIF Académie : HTTP ${response.status}`);
+  const payload:any = await response.json();
+  const summaries:any[] = Array.isArray(payload) ? payload : (payload.summaries || payload.establishments || []);
+  let synced=0;
+  for (const x of summaries) {
+    const uai=uaiOf(x.uai,x.establishment?.uai); if(!uai) continue;
+    const campaign=x.campaign||{}, mastery=x.mastery||{}, risks=x.risks||{}, actions=x.actions||{};
+    await pool.query(`insert into pcif_context(establishment_key,uai,campaign_label,mastery_level,open_actions,major_risks,overdue_actions,trend,source_url,raw_payload,updated_at)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+      on conflict(establishment_key) do update set uai=excluded.uai,campaign_label=excluded.campaign_label,mastery_level=excluded.mastery_level,open_actions=excluded.open_actions,major_risks=excluded.major_risks,overdue_actions=excluded.overdue_actions,trend=excluded.trend,source_url=excluded.source_url,raw_payload=excluded.raw_payload,updated_at=now()`,
+      [uai,uai,campaign.label||campaign.id||x.campaign_label||null,mastery.level??x.mastery_level??null,actions.open??x.open_actions??0,risks.major??x.major_risks??0,actions.overdue??x.overdue_actions??0,mastery.trend??x.trend??null,x.sourceUrl||x.source_url||`${PCIF_BASE_URL}/`,JSON.stringify(x)]);
+    synced++;
+  }
+  return {configured:true,synced,received:summaries.length};
+}
+
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
@@ -274,6 +308,15 @@ app.get('/api/analysis', async () => {
 });
 
 
+app.get('/api/integrations/pcif/status', async () => ({
+  configured:!!(PCIF_BASE_URL&&PCIF_API_KEY), baseUrl:PCIF_BASE_URL||null, cacheMinutes:PCIF_CACHE_MINUTES,
+  cached:(await pool.query('select count(*)::int n,max(updated_at) last_sync from pcif_context')).rows[0]
+}));
+app.post('/api/integrations/pcif/sync', async (req:any, reply:any) => {
+  try { const uais=Array.isArray(req.body?.uais)?req.body.uais.map(String):[]; return {ok:true,...await syncPcifSummaries(uais)}; }
+  catch(e:any){ req.log.warn(e); return reply.code(502).send({error:e.message||'Synchronisation PCIF impossible'}); }
+});
+
 app.get('/api/dashboard', async () => {
   const [balances,budgets,purchases,fdrs] = await Promise.all([
     pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,opale_entity_label,snapshot_date,created_at from balance_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`),
@@ -316,13 +359,22 @@ app.get('/api/dashboard', async () => {
       if(h.length){const cur=h[0],prev=h.find((x:any)=>x.exercise===cur.exercise-1);if(prev){const d=cur.amount-prev.amount;trend=d<0?'down':d>0?'up':'stable';if(d<0)e.signals.push({code:'FDR-DOWN',level:'watch',domain:'Santé financière',title:'Fonds de roulement en diminution',detail:`${cur.exercise}${cur.is_final?' définitif':' provisoire'} : ${cur.amount.toFixed(2)} € ; ${prev.exercise} : ${prev.amount.toFixed(2)} €.`,amount:d});}}
       states.financial=severity(e.signals.filter((x:any)=>x.domain==='Santé financière'));
     }
+    const uai=uaiOf(e.sources.balance?.opale_entity_label,e.sources.balance?.establishment_name,e.sources.budget?.establishment_name,e.sources.purchases?.establishment_name,e.sources.fdr?.establishment_name,e.name);
     const dates=Object.values(e.sources).filter(Boolean).map((x:any)=>String(x.snapshot_date).slice(0,10)).sort();
     const freshness=dates.length?dates[dates.length-1]:null;
     const staleSources=Object.entries(e.sources).filter(([,x]:any)=>x&&((Date.now()-new Date(x.snapshot_date).getTime())/86400000)>30).map(([k])=>k);
     e.signals.sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
-    establishments.push({id:e.key,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[]});
+    establishments.push({id:e.key,uai,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[]});
   }
-  try{const pcif=(await pool.query('select establishment_key,campaign_label,mastery_level,open_actions,major_risks,updated_at from pcif_context')).rows;for(const e of establishments){e.pcif=pcif.find((p:any)=>p.establishment_key===e.id)||null}}catch{}
+  try{
+    const uais=establishments.map((e:any)=>e.uai).filter(Boolean);
+    if(PCIF_BASE_URL&&PCIF_API_KEY&&uais.length){
+      const stale=(await pool.query(`select count(*)::int n from pcif_context where uai=any($1::text[]) and updated_at > now()-($2||' minutes')::interval`,[uais,String(PCIF_CACHE_MINUTES)])).rows[0].n;
+      if(Number(stale)<uais.length){try{await syncPcifSummaries(uais)}catch(err){app.log.warn({err},'Synchronisation PCIF non bloquante impossible')}}
+    }
+    const pcif=(await pool.query('select establishment_key,uai,campaign_label,mastery_level,open_actions,major_risks,overdue_actions,trend,source_url,updated_at from pcif_context')).rows;
+    for(const e of establishments)e.pcif=pcif.find((p:any)=>(e.uai&&p.uai===e.uai)||p.establishment_key===e.id)||null;
+  }catch{}
   const signals=establishments.flatMap(e=>e.signals.map((s:any)=>({...s,establishment:e.name,establishmentId:e.id}))).sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
   const actionRequired=signals.filter((s:any)=>s.level==='alert').length, watch=signals.filter((s:any)=>s.level==='watch').length;
   const stale=establishments.reduce((n,e)=>n+e.staleSources.length,0);

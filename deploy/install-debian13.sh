@@ -47,8 +47,14 @@ systemctl enable --now postgresql
 DB_PASSWORD="$(openssl rand -hex 24)"
 if [[ -f /etc/vigie.env ]]; then DB_PASSWORD="$(sed -n 's#^DATABASE_URL=postgresql://vigie:\([^@]*\)@.*#\1#p' /etc/vigie.env)"; fi
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='vigie'" | grep -q 1 || sudo -u postgres psql -c "CREATE USER vigie WITH PASSWORD '$DB_PASSWORD';"
+PCIF_BASE_URL_OLD="$(sed -n 's/^PCIF_BASE_URL=//p' /etc/vigie.env 2>/dev/null || true)"
+PCIF_API_KEY_OLD="$(sed -n 's/^PCIF_API_KEY=//p' /etc/vigie.env 2>/dev/null || true)"
+PCIF_CACHE_OLD="$(sed -n 's/^PCIF_CACHE_MINUTES=//p' /etc/vigie.env 2>/dev/null || true)"
 cat > /etc/vigie.env <<ENV
 DATABASE_URL=postgresql://vigie:$DB_PASSWORD@127.0.0.1:5432/vigie
+PCIF_BASE_URL=${PCIF_BASE_URL_OLD:-https://pcif.eple-tools.fr}
+PCIF_API_KEY=${PCIF_API_KEY_OLD}
+PCIF_CACHE_MINUTES=${PCIF_CACHE_OLD:-10}
 ENV
 chmod 600 /etc/vigie.env
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='vigie'" | grep -q 1 || sudo -u postgres createdb -O vigie vigie
@@ -131,7 +137,7 @@ log "Contrôles"
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
 HEALTH_JSON="$(curl -fsS "http://127.0.0.1:$API_PORT/health")" || fail "L'API ne répond pas sur /health."
-grep -q '"version":"0.0.14"' <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu 0.0.14)."
+grep -q '"version":"0.0.15"' <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu 0.0.15)."
 curl -fsS "http://127.0.0.1:$API_PORT/api/snapshots" >/dev/null || fail "La route API /api/snapshots ne répond pas."
 curl -fsS "http://127.0.0.1:$API_PORT/api/analysis" >/dev/null || fail "La route API /api/analysis ne répond pas."
 curl -fsS "http://127.0.0.1:$API_PORT/api/dashboard" >/dev/null || fail "La route API /api/dashboard ne répond pas."
@@ -145,7 +151,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null
 
 cat <<DONE
 
-Vigie v0.0.14 est installée.
+Vigie v0.0.15 est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 

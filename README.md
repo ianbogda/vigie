@@ -46,3 +46,19 @@ Le cockpit est désormais découpé par responsabilité :
 - `views/` : accueil, établissements et vues métier.
 
 Le chargement initial utilise désormais un callback synchrone pour `useEffect` (`void load()`), ce qui corrige l'erreur TypeScript TS2345 de la v0.0.13. La philosophie fonctionnelle et le rendu du cockpit sont conservés.
+
+## v0.0.15 — connexion PCIF Académie
+
+Vigie peut désormais consommer une synthèse PCIF via une API serveur-à-serveur. L'UAI est l'identifiant pivot entre applications. La clé PCIF reste uniquement côté API Vigie ; elle n'est jamais envoyée au navigateur.
+
+Configuration dans `/etc/vigie.env` :
+
+```env
+PCIF_BASE_URL=https://pcif.eple-tools.fr
+PCIF_API_KEY=COLLER_LA_CLE_EMISE_PAR_PCIF
+PCIF_CACHE_MINUTES=10
+```
+
+Contrôles : `GET /api/integrations/pcif/status` et synchronisation `POST /api/integrations/pcif/sync` avec `{ "uais": ["0280036M"] }`.
+
+Le contrat attendu côté PCIF Académie est décrit dans `PCIF_ACADEMIE_TODO.md`.
