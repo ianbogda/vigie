@@ -79,7 +79,9 @@ PrivateTmp=true
 WantedBy=multi-user.target
 SERVICE
 systemctl daemon-reload
-systemctl enable --now vigie
+systemctl enable vigie
+systemctl restart vigie
+sleep 2
 
 log "Pré-contrôle DNS et réseau pour HTTPS"
 PUBLIC_IP="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
@@ -128,7 +130,8 @@ sleep 3
 log "Contrôles"
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
-curl -fsS "http://127.0.0.1:$API_PORT/health" >/dev/null || fail "L'API ne répond pas sur /health."
+HEALTH_JSON="$(curl -fsS "http://127.0.0.1:$API_PORT/health")" || fail "L'API ne répond pas sur /health."
+grep -q '"version":"0.0.9"' <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu 0.0.9)."
 curl -fsS "http://127.0.0.1:$API_PORT/api/snapshots" >/dev/null || fail "La route API /api/snapshots ne répond pas."
 curl -kfsS --connect-timeout 10 "https://$DOMAIN/api/snapshots" >/dev/null || fail "Caddy ne route pas /api/* vers Vigie."
 if ! curl -kfsS --connect-timeout 10 "https://$DOMAIN/" >/dev/null; then
@@ -140,7 +143,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null
 
 cat <<DONE
 
-Vigie v0.0.8 est installée.
+Vigie v0.0.9 est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 

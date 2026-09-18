@@ -1,16 +1,16 @@
-# Vigie — v0.0.8
+# Vigie — v0.0.9
 
-Cockpit budgétaire et comptable EPLE Tools.
+Cockpit financier et comptable d'EPLE Tools.
 
-## Cette itération
+## Sources Op@le natives
 
-- corrige et diagnostique le routage `/api/*` derrière Caddy ;
-- teste `/api/snapshots` localement puis via HTTPS pendant l'installation ;
-- affiche désormais le statut HTTP et la route lorsqu'un import échoue ;
-- conserve l'import natif de balance Op@le `.lis` ;
-- distingue une **balance générale `.lis`** des autres exports Op@le utilisant également l'extension `.lis` ;
-- refuse explicitement un `.lis` budgétaire/édition au lieu de tenter de l'interpréter comme une balance ;
-- conserve `.xlsx` et `.csv` comme formats secondaires ;
-- snapshots PostgreSQL et premières alertes de comptabilité générale.
+- **Balance générale `.lis`** : snapshot comptable, soldes et premières alertes de comptabilité générale.
+- **Budget `.lis`** : snapshot budgétaire avec Budget / Engagé / Réalisé comptable / En cours / Disponible et conservation des dimensions Op@le.
+- **CLCA achats `.csv`** : commandes, fournisseurs, réceptions, facturation, comptes et CGR ; les lignes sources sont conservées en JSON pour audit.
+- **CLCV ventes `.csv`** : prévu, mais non activé tant qu'un export contenant des données n'a pas permis de valider le mapping réel.
 
-Le format `.lis` de référence d'une balance doit contenir `entitiesTrialBalance` et `accountsTrialBalance`.
+L'import `/api/import/opale` détecte automatiquement le type de fichier. Les snapshots ne sont jamais écrasés.
+
+## Déploiement
+
+Voir `INSTALL.md`. L'installateur Debian 13 build, applique les migrations PostgreSQL, redémarre explicitement Vigie et vérifie que `/health` annonce exactement `0.0.9` avant de valider l'installation.

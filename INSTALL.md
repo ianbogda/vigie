@@ -1,16 +1,18 @@
-# Installation — Vigie v0.0.7
+# Installation — Vigie v0.0.9
 
 ```bash
-sudo LETSENCRYPT_EMAIL=admin@example.fr bash ./deploy/install-debian13.sh
+sudo LETSENCRYPT_EMAIL=votre-adresse@domaine.fr bash ./deploy/install-debian13.sh
 ```
 
-Le script installe/build Vigie sous l'utilisateur de service `vigie`, applique toutes les migrations SQL, configure PostgreSQL, systemd, Caddy et Let's Encrypt.
+Cible : `https://vigie.eple-tools.fr`.
 
 Contrôles :
+
 ```bash
-systemctl status vigie --no-pager
 curl http://127.0.0.1:3211/health
-npm audit
+curl http://127.0.0.1:3211/api/snapshots
+curl http://127.0.0.1:3211/api/imports
+systemctl status vigie --no-pager
 ```
 
-URL cible : `https://vigie.eple-tools.fr`
+`/health` doit annoncer `0.0.9`. L'installation s'arrête sinon.
