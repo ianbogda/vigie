@@ -10,7 +10,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.9';
+const VERSION = '0.0.10';
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
@@ -156,6 +156,26 @@ function parseBudgetLis(buf: Buffer) {
   if(!rows.length)throw new Error('Export Budget Op@le reconnu mais aucune ligne budgétaire exploitable.');
   return {type:'budget',entity,establishment,snapshotDate,rows};
 }
+function parseFdr(buf: Buffer) {
+  const text=buf.toString('utf8').replace(/^\uFEFF/,'');
+  const records:any[]=parseCsv(text,{columns:true,delimiter:';',bom:true,skip_empty_lines:true,relax_column_count:true,trim:true});
+  if(!records.length) throw new Error('FDR vide.');
+  const keys=Object.keys(records[0]);
+  if(!keys.includes('Exercice') || !keys.includes('Montant du FDR') || !keys.includes('Définitif ?')) throw new Error('CSV non reconnu comme FDR Op@le.');
+  const rows=records.map((r:any)=>{
+    const ex=String(r['Exercice']??'').match(/(20\d{2})/);
+    return {exercise:ex?Number(ex[1]):0,amount:num(r['Montant du FDR']),direction:String(r['Sens']??''),isFinal:String(r['Définitif ?']??'').trim().toUpperCase()==='D',establishment:String(r['Ets']??'').trim(),state:String(r['Etat']??'').trim(),sourceModifiedAt:parseFrDate(r['Modifié le'])};
+  }).filter((r:any)=>r.exercise>0);
+  if(!rows.length) throw new Error('FDR reconnu mais aucun exercice exploitable.');
+  const establishment=rows.find((x:any)=>x.establishment)?.establishment||'Établissement non renseigné';
+  return {type:'fdr',establishment,snapshotDate:new Date().toISOString().slice(0,10),rows,sourceRows:records.length};
+}
+function detectCsvType(buf: Buffer) {
+  const head=buf.toString('utf8',0,Math.min(buf.length,12000)).replace(/^\uFEFF/,'');
+  if(head.includes('Exercice;Montant du FDR;') && head.includes('Définitif ?')) return 'fdr';
+  if(head.includes('N° commande') && head.includes('Fournisseur') && head.includes('Prix commandé HT')) return 'clca';
+  return 'unknown';
+}
 function parseClca(buf: Buffer) {
   const text=buf.toString('utf8').replace(/^\uFEFF/,'');
   const records:any[]=parseCsv(text,{columns:true,delimiter:';',bom:true,skip_empty_lines:true,relax_column_count:true,relax_quotes:true,trim:false,group_columns_by_name:true});
@@ -186,17 +206,52 @@ app.get('/health',()=>({ok:true,version:VERSION}));
 app.get('/api/imports',async()=>({
  balances:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,created_at from balance_snapshots order by created_at desc limit 20')).rows,
  budgets:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,created_at from budget_snapshots order by created_at desc limit 20')).rows,
- purchases:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,rejected_row_count,created_at from purchase_snapshots order by created_at desc limit 20')).rows
+ purchases:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,rejected_row_count,created_at from purchase_snapshots order by created_at desc limit 20')).rows,
+ fdr:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,created_at from fdr_snapshots order by created_at desc limit 20')).rows
 }));
 app.post('/api/import/opale',async(req:any,reply:any)=>{try{
  const file=await req.file(); if(!file)return reply.code(400).send({error:'Fichier manquant'}); const buf=await file.toBuffer(); const name=file.filename.toLowerCase(); const client=await pool.connect();
  try{
   if(name.endsWith('.lis') && decodeLis(buf).includes('entitiesTrialBalance')){const p=parseLis(buf); const alerts=analyse(p.rows); await client.query('begin'); const establishment=p.entityLabel||p.entity||'Établissement non renseigné'; const s=(await client.query('insert into balance_snapshots(establishment_name,snapshot_date,source_filename,sheet_name,row_count,source_format,opale_entity,opale_entity_label) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[establishment,new Date().toISOString().slice(0,10),file.filename,p.sheet,p.rows.length,p.format,p.entity,p.entityLabel])).rows[0]; for(const r of p.rows)await client.query('insert into balance_lines(snapshot_id,line_no,account,label,prior_debit,prior_credit,period_debit,period_credit,debit,credit,net) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[s.id,r.line,r.account,r.label,r.priorDebit,r.priorCredit,r.periodDebit,r.periodCredit,r.debit,r.credit,r.net]); for(const a of alerts)await client.query('insert into accounting_alerts(snapshot_id,rule_code,severity,title,detail,account,amount) values($1,$2,$3,$4,$5,$6,$7)',[s.id,a.code,a.level,a.title,a.detail,a.account,a.amount]); await client.query('commit'); return {ok:true,type:'balance',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length,rejectedRows:p.sourceRows-p.rows.length},alerts}}
   if(name.endsWith('.lis') && /^DATASHEET=Donnees/m.test(decodeLis(buf))){const p=parseBudgetLis(buf); await client.query('begin'); const s=(await client.query('insert into budget_snapshots(establishment_name,opale_entity,snapshot_date,source_filename,row_count) values($1,$2,$3,$4,$5) returning *',[p.establishment||p.entity,p.entity,p.snapshotDate||new Date().toISOString().slice(0,10),file.filename,p.rows.length])).rows[0]; for(const r of p.rows)await client.query('insert into budget_lines(snapshot_id,line_no,raw_dimensions,budget,committed,accounted,in_progress,available) values($1,$2,$3,$4,$5,$6,$7,$8)',[s.id,r.line,JSON.stringify(r.dimensions),r.budget,r.committed,r.accounted,r.inProgress,r.available]); await client.query('commit'); return {ok:true,type:'budget',snapshot:s,control:{importedRows:p.rows.length}}}
-  if(name.endsWith('.csv')){const p=parseClca(buf); await client.query('begin'); const s=(await client.query('insert into purchase_snapshots(establishment_name,snapshot_date,source_filename,row_count,rejected_row_count) values($1,$2,$3,$4,$5) returning *',[p.establishment,p.snapshotDate,file.filename,p.rows.length,p.rejectedRows])).rows[0]; for(const r of p.rows)await client.query('insert into purchase_lines(snapshot_id,line_no,establishment,order_number,internal_order_number,sub_number,market,supplier,order_date,currency,order_line,stage,article,article_label,quantity,received_quantity,receipt_date,invoiced_quantity,warehouse,expected_delivery_date,purchase_mode,receipt_balance_quantity,invoice_balance_quantity,ordered_price,received_price,invoice_price,invoice_amount,account,cgr_a,cgr_b,creator,modifier,raw_data) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)',[s.id,r.line,r.establishment,r.orderNumber,r.internalOrderNumber,r.subNumber,r.market,r.supplier,r.orderDate,r.currency,r.orderLine,r.stage,r.article,r.articleLabel,r.quantity,r.receivedQuantity,r.receiptDate,r.invoicedQuantity,r.warehouse,r.expectedDeliveryDate,r.purchaseMode,r.receiptBalanceQuantity,r.invoiceBalanceQuantity,r.orderedPrice,r.receivedPrice,r.invoicePrice,r.invoiceAmount,r.account,r.cgrA,r.cgrB,r.creator,r.modifier,JSON.stringify(r.raw)]); await client.query('commit'); return {ok:true,type:'clca',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length,rejectedRows:p.rejectedRows}}}
-  return reply.code(400).send({error:'Type non reconnu ici. Pour une balance utilisez Import balance; Budget .lis et CLCA .csv sont détectés automatiquement.'});
+  if(name.endsWith('.csv') && detectCsvType(buf)==='fdr'){const p=parseFdr(buf); await client.query('begin'); const s=(await client.query('insert into fdr_snapshots(establishment_name,snapshot_date,source_filename,row_count) values($1,$2,$3,$4) returning *',[p.establishment,p.snapshotDate,file.filename,p.rows.length])).rows[0]; for(const r of p.rows)await client.query('insert into fdr_lines(snapshot_id,exercise,amount,direction,is_final,establishment,state,source_modified_at) values($1,$2,$3,$4,$5,$6,$7,$8)',[s.id,r.exercise,r.amount,r.direction,r.isFinal,r.establishment,r.state,r.sourceModifiedAt]); await client.query('commit'); return {ok:true,type:'fdr',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length}}}
+  if(name.endsWith('.csv') && detectCsvType(buf)==='clca'){const p=parseClca(buf); await client.query('begin'); const s=(await client.query('insert into purchase_snapshots(establishment_name,snapshot_date,source_filename,row_count,rejected_row_count) values($1,$2,$3,$4,$5) returning *',[p.establishment,p.snapshotDate,file.filename,p.rows.length,p.rejectedRows])).rows[0]; for(const r of p.rows)await client.query('insert into purchase_lines(snapshot_id,line_no,establishment,order_number,internal_order_number,sub_number,market,supplier,order_date,currency,order_line,stage,article,article_label,quantity,received_quantity,receipt_date,invoiced_quantity,warehouse,expected_delivery_date,purchase_mode,receipt_balance_quantity,invoice_balance_quantity,ordered_price,received_price,invoice_price,invoice_amount,account,cgr_a,cgr_b,creator,modifier,raw_data) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)',[s.id,r.line,r.establishment,r.orderNumber,r.internalOrderNumber,r.subNumber,r.market,r.supplier,r.orderDate,r.currency,r.orderLine,r.stage,r.article,r.articleLabel,r.quantity,r.receivedQuantity,r.receiptDate,r.invoicedQuantity,r.warehouse,r.expectedDeliveryDate,r.purchaseMode,r.receiptBalanceQuantity,r.invoiceBalanceQuantity,r.orderedPrice,r.receivedPrice,r.invoicePrice,r.invoiceAmount,r.account,r.cgrA,r.cgrB,r.creator,r.modifier,JSON.stringify(r.raw)]); await client.query('commit'); return {ok:true,type:'clca',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length,rejectedRows:p.rejectedRows}}}
+  return reply.code(400).send({error:'Type Op@le non reconnu. Formats gérés : balance .lis, budget .lis, CLCA .csv et FDR .csv.'});
  }catch(e){try{await client.query('rollback')}catch{};throw e}finally{client.release()}
 }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Import impossible'})}});
+
+app.get('/api/analysis', async () => {
+ const latestBalance=(await pool.query('select * from balance_snapshots order by snapshot_date desc,created_at desc limit 1')).rows[0]||null;
+ const latestBudget=(await pool.query('select * from budget_snapshots order by snapshot_date desc,created_at desc limit 1')).rows[0]||null;
+ const latestPurchase=(await pool.query('select * from purchase_snapshots order by snapshot_date desc,created_at desc limit 1')).rows[0]||null;
+ const latestFdr=(await pool.query('select * from fdr_snapshots order by snapshot_date desc,created_at desc limit 1')).rows[0]||null;
+ const signals:any[]=[]; const metrics:any={};
+ if(latestBudget){
+  const q=(await pool.query('select coalesce(sum(budget),0) budget,coalesce(sum(committed),0) committed,coalesce(sum(accounted),0) accounted,coalesce(sum(in_progress),0) in_progress,coalesce(sum(available),0) available from budget_lines where snapshot_id=$1',[latestBudget.id])).rows[0];
+  Object.assign(metrics,{budget:{...q,snapshotDate:latestBudget.snapshot_date,establishment:latestBudget.establishment_name}});
+  const b=Number(q.budget), used=Number(q.accounted)+Number(q.committed)+Number(q.in_progress), avail=Number(q.available);
+  if(b>0){const rate=used/b; metrics.budget.executionRate=rate; if(rate>=.95)signals.push({code:'BUD-095',level:'alert',domain:'Budget',title:'Crédits fortement mobilisés',detail:`${(rate*100).toFixed(1)} % des crédits sont réalisés, engagés ou en cours.`,amount:used}); else if(rate>=.85)signals.push({code:'BUD-085',level:'watch',domain:'Budget',title:'Consommation budgétaire à examiner',detail:`${(rate*100).toFixed(1)} % des crédits sont réalisés, engagés ou en cours.`,amount:used});}
+  if(avail<0)signals.push({code:'BUD-NEG',level:'alert',domain:'Budget',title:'Disponible budgétaire négatif',detail:`Le disponible agrégé ressort à ${avail.toFixed(2)} €.`,amount:avail});
+ }
+ if(latestPurchase){
+  const q=(await pool.query(`select count(*)::int lines,coalesce(sum(abs(invoice_amount)),0) invoiced,coalesce(sum(abs(ordered_price*quantity)),0) ordered,coalesce(sum(case when order_date < current_date-60 and abs(invoice_balance_quantity)>.0001 then 1 else 0 end),0)::int old_uninvoiced,coalesce(sum(case when receipt_date is not null and abs(invoice_balance_quantity)>.0001 then 1 else 0 end),0)::int received_uninvoiced from purchase_lines where snapshot_id=$1`,[latestPurchase.id])).rows[0];
+  metrics.purchases={...q,snapshotDate:latestPurchase.snapshot_date,establishment:latestPurchase.establishment_name};
+  if(Number(q.old_uninvoiced)>0)signals.push({code:'ACH-OLD',level:'watch',domain:'Achats',title:'Commandes anciennes restant à facturer',detail:`${q.old_uninvoiced} ligne(s) de commande de plus de 60 jours présentent encore un solde de facturation.`,count:Number(q.old_uninvoiced)});
+  if(Number(q.received_uninvoiced)>0)signals.push({code:'ACH-REC',level:'watch',domain:'Achats',title:'Réceptions restant à rapprocher de la facturation',detail:`${q.received_uninvoiced} ligne(s) réceptionnée(s) présentent encore un solde de facturation.`,count:Number(q.received_uninvoiced)});
+ }
+ if(latestBalance){
+  const a=(await pool.query("select severity,title,detail,account,amount,rule_code from accounting_alerts where snapshot_id=$1 order by case severity when 'alert' then 0 else 1 end,abs(amount) desc limit 25",[latestBalance.id])).rows;
+  metrics.accounting={snapshotDate:latestBalance.snapshot_date,establishment:latestBalance.establishment_name,signalCount:a.length};
+  for(const x of a)signals.push({code:x.rule_code,level:x.severity,domain:'Comptabilité générale',title:x.title,detail:x.detail,account:x.account,amount:Number(x.amount)});
+ }
+ if(latestFdr){
+  const f=(await pool.query('select exercise,amount,is_final from fdr_lines where snapshot_id=$1 order by exercise desc',[latestFdr.id])).rows.map((x:any)=>({...x,amount:Number(x.amount)})); metrics.fdr={history:f,snapshotDate:latestFdr.snapshot_date,establishment:latestFdr.establishment_name};
+  if(f.length){const cur=f[0],prev=f.find((x:any)=>x.exercise===cur.exercise-1); if(prev){const variation=cur.amount-prev.amount,rate=prev.amount?variation/prev.amount:null; metrics.fdr.variation=variation;metrics.fdr.variationRate=rate;metrics.fdr.comparisonNature=cur.is_final?'definitive':'provisional_vs_definitive'; if(variation<0)signals.push({code:'FDR-DOWN',level:'watch',domain:'Santé financière',title:'Fonds de roulement en diminution',detail:`FDR ${cur.exercise}${cur.is_final?' définitif':' provisoire'} : ${cur.amount.toFixed(2)} € ; ${prev.exercise} : ${prev.amount.toFixed(2)} €. Comparaison à interpréter selon le caractère définitif des situations.`,amount:variation});}}
+ }
+ const freshness=[['Balance',latestBalance],['Budget',latestBudget],['CLCA',latestPurchase],['FDR',latestFdr]].map(([type,s]:any)=>({type,available:!!s,snapshotDate:s?.snapshot_date||null,establishment:s?.establishment_name||null}));
+ const rank:any={alert:0,watch:1,ok:2}; signals.sort((a,b)=>(rank[a.level]??9)-(rank[b.level]??9)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
+ return {version:VERSION,generatedAt:new Date().toISOString(),metrics,signals,freshness,method:'Règles déterministes et traçables ; une absence de donnée n’est jamais assimilée à zéro.'};
+});
 
 app.get('/api/snapshots',async()=>({snapshots:(await pool.query('select id, establishment_name, snapshot_date, source_filename, row_count, created_at from balance_snapshots order by snapshot_date desc, created_at desc limit 50')).rows}));
 app.get('/api/snapshots/:id', async (req:any, reply) => {

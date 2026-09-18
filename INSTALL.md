@@ -1,18 +1,18 @@
-# Installation — Vigie v0.0.9
+# Installation — Vigie v0.0.10
+
+Sur Debian 13 :
 
 ```bash
-sudo LETSENCRYPT_EMAIL=votre-adresse@domaine.fr bash ./deploy/install-debian13.sh
+unzip vigie-eple-v0.0.10.zip
+cd vigie-eple-v0.0.10
+sudo bash deploy/install-debian13.sh
 ```
 
-Cible : `https://vigie.eple-tools.fr`.
+L'installateur applique les migrations PostgreSQL, build l'API et le front, redémarre `vigie`, configure Caddy et vérifie la version réellement chargée.
 
-Contrôles :
+Contrôle complémentaire :
 
 ```bash
 curl http://127.0.0.1:3211/health
-curl http://127.0.0.1:3211/api/snapshots
-curl http://127.0.0.1:3211/api/imports
-systemctl status vigie --no-pager
+curl http://127.0.0.1:3211/api/analysis
 ```
-
-`/health` doit annoncer `0.0.9`. L'installation s'arrête sinon.
