@@ -10,5 +10,5 @@ const alerts=[
  {level:'alert',eple:'LP C',domain:'Comptabilité',message:'Compte 4718 : 24 300 € à régulariser'},
  {level:'watch',eple:'Collège A',domain:'Recouvrement',message:'3 créances > 90 jours : 7 820 €'},
  {level:'watch',eple:'LPO D',domain:'Fournisseurs',message:'14 factures non payées depuis > 30 jours'}];
-app.get('/health',()=>({ok:true,version:'0.0.2'})); app.get('/api/dashboard',()=>({updatedAt:new Date().toISOString(),kpis:{eple:8,alerts:3,treasury:2800000,execution:0.96},establishments,alerts}));
+app.get('/health',()=>({ok:true,version:'0.0.3'})); app.get('/api/dashboard',()=>({updatedAt:new Date().toISOString(),kpis:{eple:8,alerts:3,treasury:2800000,execution:0.96},establishments,alerts}));
 app.listen({port:Number(process.env.PORT||3211),host:'0.0.0.0'});
