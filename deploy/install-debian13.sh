@@ -103,7 +103,8 @@ $DOMAIN {
 
     encode zstd gzip
 
-    handle /api/* {
+    @api path /api /api/*
+    handle @api {
         reverse_proxy 127.0.0.1:$API_PORT
     }
 
@@ -128,6 +129,8 @@ log "Contrôles"
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
 curl -fsS "http://127.0.0.1:$API_PORT/health" >/dev/null || fail "L'API ne répond pas sur /health."
+curl -fsS "http://127.0.0.1:$API_PORT/api/snapshots" >/dev/null || fail "La route API /api/snapshots ne répond pas."
+curl -kfsS --connect-timeout 10 "https://$DOMAIN/api/snapshots" >/dev/null || fail "Caddy ne route pas /api/* vers Vigie."
 if ! curl -kfsS --connect-timeout 10 "https://$DOMAIN/" >/dev/null; then
   echo "HTTPS ne répond pas encore correctement. Diagnostic Caddy :" >&2
   journalctl -u caddy -n 80 --no-pager >&2 || true
@@ -137,7 +140,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null
 
 cat <<DONE
 
-Vigie v0.0.7 est installée.
+Vigie v0.0.8 est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 

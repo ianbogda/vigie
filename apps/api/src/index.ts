@@ -10,7 +10,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.7';
+const VERSION = '0.0.8';
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
@@ -74,6 +74,14 @@ function lisNumber(objectText: string, key: string) {
 }
 function parseLis(buf: Buffer) {
   const text = decodeLis(buf);
+  // L'extension .lis est utilisée par Op@le pour plusieurs types d'exports.
+  // Vigie n'accepte ici que la balance générale native.
+  if (!text.includes('entitiesTrialBalance') || !text.includes('accountsTrialBalance')) {
+    if (/^DATASHEET=/m.test(text) || /^DATASEPCHAR=/m.test(text)) {
+      throw new Error("Fichier .lis Op@le reconnu, mais ce n'est pas une balance générale. Exportez la balance générale (entitiesTrialBalance/accountsTrialBalance).");
+    }
+    throw new Error("Fichier .lis non reconnu comme balance générale Op@le.");
+  }
   const entity = text.match(/"entity"\s*:\s*"([^"]+)"/)?.[1] || '';
   const entityLabel = text.match(/"entityLabel"\s*:\s*"([^"]+)"/)?.[1] || '';
   const objects = text.match(/\{\s*"account"\s*:\s*"[^"]+"[\s\S]*?\}(?=\s*,|\s*\])/g) || [];
@@ -157,4 +165,5 @@ app.post('/api/import/balance',async(req:any,reply:any)=>{try{
     await client.query('commit'); return {ok:true,snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length,rejectedRows:p.sourceRows-p.rows.length},alerts};
   }catch(e){await client.query('rollback');throw e}finally{client.release()}
 }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Import impossible'})}});
+app.setNotFoundHandler((req, reply) => reply.code(404).send({error:'Route API introuvable',method:req.method,path:req.url,version:VERSION}));
 app.listen({port:Number(process.env.PORT||3211),host:'0.0.0.0'});

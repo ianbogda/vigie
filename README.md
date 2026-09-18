@@ -1,18 +1,16 @@
-# Vigie — v0.0.7
+# Vigie — v0.0.8
 
-Cockpit financier et comptable de la suite EPLE Tools.
+Cockpit budgétaire et comptable EPLE Tools.
 
 ## Cette itération
 
-- import **natif recommandé** des balances Op@le `.lis` ;
-- compatibilité `.xlsx` et `.csv` ;
-- lecture tolérante du format `.lis` observé (Windows-1252 et intitulés contenant des guillemets non échappés) ;
-- identification de `entity` et `entityLabel` ;
-- conservation des 8 valeurs Op@le : cumuls antérieurs débit/crédit, période débit/crédit, soldes débit/crédit ;
-- snapshot PostgreSQL daté ;
-- premières alertes de comptabilité générale ;
-- correction du typage ExcelJS de la v0.0.6 ;
-- migrations SQL idempotentes ;
-- domaine : `https://vigie.eple-tools.fr`.
+- corrige et diagnostique le routage `/api/*` derrière Caddy ;
+- teste `/api/snapshots` localement puis via HTTPS pendant l'installation ;
+- affiche désormais le statut HTTP et la route lorsqu'un import échoue ;
+- conserve l'import natif de balance Op@le `.lis` ;
+- distingue une **balance générale `.lis`** des autres exports Op@le utilisant également l'extension `.lis` ;
+- refuse explicitement un `.lis` budgétaire/édition au lieu de tenter de l'interpréter comme une balance ;
+- conserve `.xlsx` et `.csv` comme formats secondaires ;
+- snapshots PostgreSQL et premières alertes de comptabilité générale.
 
-Le `.lis` fourni pour validation n'est pas supposé être un JSON strict : Vigie utilise un parseur ciblé sur la structure de balance Op@le afin de tolérer les guillemets présents dans certains intitulés de comptes.
+Le format `.lis` de référence d'une balance doit contenir `entitiesTrialBalance` et `accountsTrialBalance`.
