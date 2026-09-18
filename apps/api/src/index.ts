@@ -10,7 +10,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.11';
+const VERSION = '0.0.12';
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
@@ -256,6 +256,62 @@ app.get('/api/analysis', async () => {
  const freshness=[['Balance',latestBalance],['Budget',latestBudget],['CLCA',latestPurchase],['FDR',latestFdr]].map(([type,s]:any)=>({type,available:!!s,snapshotDate:s?.snapshot_date||null,establishment:s?.establishment_name||null}));
  const rank:any={alert:0,watch:1,ok:2}; signals.sort((a,b)=>(rank[a.level]??9)-(rank[b.level]??9)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
  return {version:VERSION,generatedAt:new Date().toISOString(),metrics,signals,freshness,method:'Règles déterministes et traçables ; une absence de donnée n’est jamais assimilée à zéro.'};
+});
+
+
+app.get('/api/dashboard', async () => {
+  const [balances,budgets,purchases,fdrs] = await Promise.all([
+    pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,opale_entity_label,snapshot_date,created_at from balance_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`),
+    pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,snapshot_date,created_at from budget_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`),
+    pool.query(`select distinct on (establishment_name) id,establishment_name source_key,establishment_name,snapshot_date,created_at from purchase_snapshots order by establishment_name,snapshot_date desc,created_at desc`),
+    pool.query(`select distinct on (establishment_name) id,establishment_name source_key,establishment_name,snapshot_date,created_at from fdr_snapshots order by establishment_name,snapshot_date desc,created_at desc`)
+  ]);
+  const map=new Map<string,any>();
+  const ensure=(key:string,name?:string)=>{if(!map.has(key))map.set(key,{key,name:name||key,sources:{balance:null,budget:null,purchases:null,fdr:null},signals:[]});return map.get(key)};
+  for(const x of balances.rows){const e=ensure(x.source_key,x.opale_entity_label||x.establishment_name);e.name=x.opale_entity_label||e.name;e.sources.balance=x}
+  for(const x of budgets.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.budget=x}
+  for(const x of purchases.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.purchases=x}
+  for(const x of fdrs.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.fdr=x}
+  const severity=(xs:any[])=>xs.some(x=>x.level==='alert')?'alert':xs.some(x=>x.level==='watch')?'watch':'ok';
+  const establishments:any[]=[]; let totalBudget=0,totalAvailable=0,totalAccounted=0,totalCommitted=0,totalInProgress=0;
+  for(const e of map.values()){
+    const states:any={budget:'missing',financial:'missing',recovery:'missing',suppliers:'missing',accounting:'missing'};
+    if(e.sources.budget){
+      const q=(await pool.query(`select coalesce(sum(budget),0) budget,coalesce(sum(committed),0) committed,coalesce(sum(accounted),0) accounted,coalesce(sum(in_progress),0) in_progress,coalesce(sum(available),0) available from budget_lines where snapshot_id=$1`,[e.sources.budget.id])).rows[0];
+      const m={budget:Number(q.budget),committed:Number(q.committed),accounted:Number(q.accounted),inProgress:Number(q.in_progress),available:Number(q.available)}; e.budgetMetrics=m;
+      totalBudget+=m.budget;totalAvailable+=m.available;totalAccounted+=m.accounted;totalCommitted+=m.committed;totalInProgress+=m.inProgress;
+      const rate=m.budget?(m.accounted+m.committed+m.inProgress)/m.budget:null;
+      if(m.available<-.01)e.signals.push({code:'BUD-NEG',level:'alert',domain:'Budget',title:'Disponible budgétaire négatif',detail:`Disponible agrégé : ${m.available.toFixed(2)} €`,amount:m.available});
+      else if(rate!==null&&rate>=.9)e.signals.push({code:'BUD-HIGH',level:'watch',domain:'Budget',title:'Crédits fortement mobilisés',detail:`${(rate*100).toFixed(1)} % du budget est réalisé, engagé ou en cours.`,amount:m.budget-m.available});
+      states.budget=severity(e.signals.filter((x:any)=>x.domain==='Budget'));
+    }
+    if(e.sources.purchases){
+      const q=(await pool.query(`select coalesce(sum(case when order_date < current_date-60 and abs(invoice_balance_quantity)>.0001 then 1 else 0 end),0)::int old_uninvoiced,coalesce(sum(case when receipt_date is not null and abs(invoice_balance_quantity)>.0001 then 1 else 0 end),0)::int received_uninvoiced from purchase_lines where snapshot_id=$1`,[e.sources.purchases.id])).rows[0];
+      if(Number(q.old_uninvoiced)>0)e.signals.push({code:'ACH-OLD',level:'watch',domain:'Fournisseurs',title:'Commandes anciennes restant à facturer',detail:`${q.old_uninvoiced} ligne(s) de plus de 60 jours avec solde de facturation.`,count:Number(q.old_uninvoiced)});
+      if(Number(q.received_uninvoiced)>0)e.signals.push({code:'ACH-REC',level:'watch',domain:'Fournisseurs',title:'Réceptions restant à rapprocher',detail:`${q.received_uninvoiced} ligne(s) réceptionnée(s) présentent encore un solde de facturation.`,count:Number(q.received_uninvoiced)});
+      states.suppliers=severity(e.signals.filter((x:any)=>x.domain==='Fournisseurs'));
+    }
+    if(e.sources.balance){
+      const a=(await pool.query(`select severity,rule_code,title,detail,account,amount from accounting_alerts where snapshot_id=$1 order by case severity when 'alert' then 0 else 1 end,abs(amount) desc limit 20`,[e.sources.balance.id])).rows;
+      for(const x of a)e.signals.push({code:x.rule_code,level:x.severity,domain:'Comptabilité générale',title:x.title,detail:x.detail,account:x.account,amount:Number(x.amount)});
+      states.accounting=a.length?severity(a.map((x:any)=>({level:x.severity}))):'ok';
+    }
+    let trend='stable';
+    if(e.sources.fdr){
+      const h=(await pool.query(`select exercise,amount,is_final from fdr_lines where snapshot_id=$1 order by exercise desc`,[e.sources.fdr.id])).rows.map((x:any)=>({...x,amount:Number(x.amount)})); e.fdrHistory=h;
+      if(h.length){const cur=h[0],prev=h.find((x:any)=>x.exercise===cur.exercise-1);if(prev){const d=cur.amount-prev.amount;trend=d<0?'down':d>0?'up':'stable';if(d<0)e.signals.push({code:'FDR-DOWN',level:'watch',domain:'Santé financière',title:'Fonds de roulement en diminution',detail:`${cur.exercise}${cur.is_final?' définitif':' provisoire'} : ${cur.amount.toFixed(2)} € ; ${prev.exercise} : ${prev.amount.toFixed(2)} €.`,amount:d});}}
+      states.financial=severity(e.signals.filter((x:any)=>x.domain==='Santé financière'));
+    }
+    const dates=Object.values(e.sources).filter(Boolean).map((x:any)=>String(x.snapshot_date).slice(0,10)).sort();
+    const freshness=dates.length?dates[dates.length-1]:null;
+    const staleSources=Object.entries(e.sources).filter(([,x]:any)=>x&&((Date.now()-new Date(x.snapshot_date).getTime())/86400000)>30).map(([k])=>k);
+    e.signals.sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
+    establishments.push({id:e.key,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[]});
+  }
+  const signals=establishments.flatMap(e=>e.signals.map((s:any)=>({...s,establishment:e.name,establishmentId:e.id}))).sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
+  const actionRequired=signals.filter((s:any)=>s.level==='alert').length, watch=signals.filter((s:any)=>s.level==='watch').length;
+  const stale=establishments.reduce((n,e)=>n+e.staleSources.length,0);
+  return {version:VERSION,generatedAt:new Date().toISOString(),kpis:{establishments:establishments.length,actionRequired,watch,stale,totalBudget,totalAvailable,totalAccounted,totalCommitted,totalInProgress},establishments,signals:signals.slice(0,50)};
 });
 
 app.get('/api/snapshots',async()=>({snapshots:(await pool.query('select id, establishment_name, snapshot_date, source_filename, row_count, created_at from balance_snapshots order by snapshot_date desc, created_at desc limit 50')).rows}));

@@ -1,25 +1,22 @@
-# Vigie — v0.0.11
+# Vigie — v0.0.12
 
-Vigie est le cockpit de détection budgétaire, financière et comptable d'EPLE Tools.
+Cockpit financier et comptable EPLE alimenté par les exports Op@le.
 
-## Cette itération
+## Nouveautés v0.0.12
 
-- import natif de la balance générale Op@le `.lis` (EBLC) ;
-- import Budget Op@le `.lis` ;
-- import CLCA achats `.csv` ;
-- **nouvel import FDR `.csv`**, avec historique et distinction définitif/provisoire ;
-- **premier moteur d'analyse croisée** `/api/analysis` ;
-- nouvelle vue **Analyse** alimentée par les snapshots réels ;
-- règles initiales : mobilisation budgétaire, disponible négatif, commandes anciennes restant à facturer, réceptions restant à rapprocher, anomalies de balance, évolution du FDR ;
-- fraîcheur et disponibilité de chaque source affichées explicitement.
+- tableau de bord d'accueil alimenté par les **données réellement importées** ;
+- suppression des EPLE, KPI, alertes et montants fictifs de la synthèse ;
+- nouveau endpoint `GET /api/dashboard` multi-EPLE ;
+- radar calculé à partir des derniers snapshots Balance, Budget, CLCA et FDR ;
+- signaux prioritaires issus des règles déterministes ;
+- agrégation réelle de l'exécution budgétaire ;
+- fraîcheur des sources et sources manquantes visibles ;
+- tiroir d'investigation avec signaux, règles et traçabilité des imports ;
+- historique FDR visible par établissement ;
+- import FDR/CLCA conservant le parseur CSV Op@le tolérant (`relax_quotes`).
 
-Le moteur est déterministe et traçable. Un signal n'est pas un diagnostic et une donnée absente n'est jamais assimilée à zéro. Les comparaisons FDR signalent le caractère provisoire/définitif.
+## Limite connue
 
-CLCV ventes reste en attente d'un export non vide pour valider son mapping réel.
+Le recouvrement reste en **données insuffisantes** tant qu'une source CLCV/créances n'est pas intégrée. Vigie ne transforme jamais cette absence en valeur zéro ou en état vert.
 
-
-## v0.0.11
-- correction du parseur FDR pour les valeurs Op@le de type `=("…")` ;
-- parseur CSV Op@le commun et tolérant pour FDR/CLCA ;
-- correction JSX `>` ;
-- animation discrète du tableau de bord d’accueil (entrée progressive, signaux, barre d’exécution, survol), avec respect de `prefers-reduced-motion`.
+Voir `INSTALL.md` pour le déploiement Debian 13.
