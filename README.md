@@ -13,7 +13,7 @@ Cette itération verrouille l'UX avant branchement des exports Op@le :
 
 Les données sont fictives en v0.0.3. La prochaine étape branche PostgreSQL, les snapshots et les premiers importeurs.
 
-URL cible : `https://vigie.epele-tools.fr`
+URL cible : `https://vigie.eple-tools.fr`
 
 ## Installation serveur
 

@@ -1,4 +1,4 @@
-# Installation — Vigie v0.0.3
+# Installation — Vigie v0.0.4
 
 ## Installation automatique — Debian 13
 
@@ -8,7 +8,7 @@ Vigie fournit désormais un installateur Bash qui installe les prérequis, Node.
 
 - Debian 13 ;
 - accès `sudo` / root ;
-- DNS `vigie.epele-tools.fr` pointant vers l'adresse publique du serveur ;
+- DNS `vigie.eple-tools.fr` pointant vers l'adresse publique du serveur ;
 - ports TCP 80 et 443 accessibles depuis Internet.
 
 ### Installation
@@ -28,7 +28,7 @@ sudo LETSENCRYPT_EMAIL=admin@votre-domaine.fr bash ./deploy/install-debian13.sh
 Le domaine peut être surchargé si nécessaire :
 
 ```bash
-sudo VIGIE_DOMAIN=vigie.epele-tools.fr LETSENCRYPT_EMAIL=admin@votre-domaine.fr bash ./deploy/install-debian13.sh
+sudo VIGIE_DOMAIN=vigie.eple-tools.fr LETSENCRYPT_EMAIL=admin@votre-domaine.fr bash ./deploy/install-debian13.sh
 ```
 
 ## HTTPS / Let's Encrypt
@@ -47,11 +47,27 @@ journalctl -u vigie -f
 journalctl -u caddy -f
 ```
 
-URL de production : `https://vigie.epele-tools.fr`
+URL de production : `https://vigie.eple-tools.fr`
 
 ## Développement
 
 ```bash
 npm install
 npm run dev
+```
+
+## Réparation HTTPS
+
+La v0.0.4 corrige le domaine par défaut en `vigie.eple-tools.fr` (sans `e` supplémentaire) et bloque l'installation si le DNS ne pointe pas vers le VPS.
+
+En cas d'installation v0.0.3 déjà effectuée :
+
+```bash
+sudo VIGIE_DOMAIN=vigie.eple-tools.fr bash ./deploy/install-debian13.sh
+```
+
+Diagnostic seul :
+
+```bash
+sudo bash ./deploy/repair-https.sh
 ```

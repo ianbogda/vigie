@@ -4,7 +4,7 @@ set -Eeuo pipefail
 APP_NAME="vigie"
 APP_DIR="/opt/vigie"
 APP_USER="vigie"
-DOMAIN="${VIGIE_DOMAIN:-vigie.epele-tools.fr}"
+DOMAIN="${VIGIE_DOMAIN:-vigie.eple-tools.fr}"
 API_PORT="${VIGIE_API_PORT:-3211}"
 LE_EMAIL="${LETSENCRYPT_EMAIL:-}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +15,7 @@ fail(){ printf '\n\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 log "Installation des prérequis"
 apt-get update
-apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https rsync
+apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https rsync dnsutils openssl
 
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -p 'Number(process.versions.node.split(`.`)[0])' 2>/dev/null || echo 0)" -lt 22 ]]; then
   log "Installation de Node.js 22"
@@ -67,6 +67,17 @@ SERVICE
 systemctl daemon-reload
 systemctl enable --now vigie
 
+log "Pré-contrôle DNS et réseau pour HTTPS"
+PUBLIC_IP="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+DNS_IPS="$(dig +short A "$DOMAIN" 2>/dev/null | tr '\n' ' ' || true)"
+if [[ -z "$DNS_IPS" ]]; then
+  fail "Aucun enregistrement DNS A trouvé pour $DOMAIN. Créez/corrigez le DNS avant de demander le certificat Let's Encrypt."
+fi
+if [[ -n "$PUBLIC_IP" ]] && ! grep -qw "$PUBLIC_IP" <<<"$DNS_IPS"; then
+  fail "Le DNS de $DOMAIN pointe vers [$DNS_IPS], mais l'IP publique détectée du VPS est $PUBLIC_IP. Corrigez le DNS puis relancez l'installation."
+fi
+echo "DNS OK : $DOMAIN -> $DNS_IPS"
+
 log "Configuration HTTPS Let's Encrypt via Caddy"
 TLS_LINE="tls {\n        issuer acme {\n            dir https://acme-v02.api.letsencrypt.org/directory\n        }\n    }"
 if [[ -n "$LE_EMAIL" ]]; then
@@ -95,17 +106,24 @@ $DOMAIN {
 CADDY
 caddy fmt --overwrite /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile
-systemctl enable --now caddy
-systemctl reload caddy
+systemctl enable caddy
+systemctl restart caddy
+sleep 3
 
 log "Contrôles"
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
 curl -fsS "http://127.0.0.1:$API_PORT/health" >/dev/null || fail "L'API ne répond pas sur /health."
+if ! curl -kfsS --connect-timeout 10 "https://$DOMAIN/" >/dev/null; then
+  echo "HTTPS ne répond pas encore correctement. Diagnostic Caddy :" >&2
+  journalctl -u caddy -n 80 --no-pager >&2 || true
+  fail "Échec HTTPS pour $DOMAIN. Vérifiez surtout DNS, ports 80/443 et les journaux Caddy ci-dessus."
+fi
+echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null | openssl x509 -noout -subject -issuer -dates || true
 
 cat <<DONE
 
-Vigie v0.0.3 est installée.
+Vigie v0.0.4 est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 
