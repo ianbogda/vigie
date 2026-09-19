@@ -8,17 +8,18 @@ const movementKind=(journal:string)=>journal.trim().toUpperCase()==='ZOUVER'?'OP
 
 export function isAccountingCsv(buf:Buffer){
  const h=buf.toString('utf8',0,Math.min(buf.length,16000)).replace(/^\uFEFF/,'');
- return h.includes('Compte;Libellé du compte;Journal;Période;Cumul débit;Cumul crédit')&&h.includes(';Ets;');
+ return h.includes('Compte;Libellé du compte;Journal;Période;Cumul débit;Cumul crédit');
 }
 export function parseAccountingCsv(buf:Buffer,contextEntity:string){
  const records:any[]=parseCsv(buf.toString('utf8').replace(/^\uFEFF/,''),{columns:true,delimiter:';',bom:true,skip_empty_lines:true,relax_column_count:true,relax_quotes:true,trim:false,group_columns_by_name:true});
  const parsed=records.slice(0,100000).map((r,i)=>{const account=value(r,'Compte').replace(/\s/g,''),period=value(r,'Période'),periodDate=monthDate(period),journal=value(r,'Journal'),entity=value(r,'Ets');return {line:i+2,entity,account,accountLabel:value(r,'Libellé du compte'),journal,period,periodDate,debit:money(value(r,'Cumul débit')),credit:money(value(r,'Cumul crédit')),movementKind:movementKind(journal),raw:r}}).filter(x=>/^[1-8]\d*$/.test(x.account)&&x.periodDate);
  if(!parsed.length)throw new Error('Export comptable reconnu mais aucune ligne de classe 1 à 8 exploitable.');
  const entities=[...new Set(parsed.map(x=>x.entity).filter(Boolean))];
- if(entities.length!==1)throw new Error(`Le fichier doit contenir un seul ETS ; ${entities.length||'aucun'} ETS détecté.`);
- const fileEntity=entities[0];
+ if(entities.length>1)throw new Error(`Le fichier contient plusieurs ETS (${entities.join(', ')}). Un import comptable doit être rattaché à un seul ETS.`);
  if(!contextEntity)throw new Error('Le contexte ETS est obligatoire pour un import comptable.');
- if(fileEntity!==contextEntity)throw new Error(`ETS incohérent : le fichier contient ${fileEntity}, alors que l’import est contextualisé sur ${contextEntity}.`);
+ const fileEntity=entities[0]||null;
+ if(fileEntity&&fileEntity!==contextEntity)throw new Error(`ETS incohérent : le fichier contient ${fileEntity}, alors que l’import est contextualisé sur ${contextEntity}.`);
+ const effectiveEntity=contextEntity;
  const dates=parsed.map(x=>x.periodDate!).sort();
- return {entity:fileEntity,rows:parsed,sourceRows:records.length,periodFrom:dates[0],periodTo:dates.at(-1)!,sourceFormat:'opale-accounting-monthly-summary'};
+ return {entity:effectiveEntity,fileEntity,entityFromContext:!fileEntity,rows:parsed,sourceRows:records.length,periodFrom:dates[0],periodTo:dates.at(-1)!,sourceFormat:'opale-accounting-monthly-summary'};
 }
