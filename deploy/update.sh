@@ -108,21 +108,93 @@ sudo -u "$APP_USER" npm run build
 
 log "Migrations PostgreSQL"
 
+# Table de suivi des migrations.
+# Elle permet de ne jamais rejouer une migration déjà appliquée.
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename     text PRIMARY KEY,
+    applied_at  timestamptz NOT NULL DEFAULT now()
+);
+SQL
+
+#
+# Amorçage d'une installation Vigie existante.
+#
+# Si aucune migration n'est encore enregistrée mais que les tables historiques
+# existent, on considère les migrations 001 à 011 comme déjà appliquées.
+#
+MIGRATION_COUNT="$(
+    psql "$DATABASE_URL" -Atqc \
+    "SELECT count(*) FROM schema_migrations;"
+)"
+
+if [[ "$MIGRATION_COUNT" == "0" ]]; then
+
+    LEGACY_INSTALL="$(
+        psql "$DATABASE_URL" -Atqc \
+        "SELECT to_regclass('public.balance_snapshots') IS NOT NULL;"
+    )"
+
+    if [[ "$LEGACY_INSTALL" == "t" ]]; then
+        log "Initialisation du suivi des migrations existantes"
+
+        for sql in "$APP_DIR"/deploy/sql/*.sql; do
+            filename="$(basename "$sql")"
+            number="${filename%%_*}"
+
+            # Les migrations historiques 001 à 011 existaient
+            # avant l'introduction du suivi des migrations.
+            if [[ "$number" =~ ^[0-9]+$ ]] && (( 10#$number <= 11 )); then
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+                    -c "INSERT INTO schema_migrations(filename)
+                        VALUES ('$filename')
+                        ON CONFLICT DO NOTHING;" >/dev/null
+
+                echo "  ✓ $filename (historique)"
+            fi
+        done
+    fi
+fi
+
+#
+# Application des migrations encore absentes
+#
+
 shopt -s nullglob
 SQL_FILES=("$APP_DIR"/deploy/sql/*.sql)
 
-if [[ ${#SQL_FILES[@]} -eq 0 ]]; then
-  fail "Aucune migration SQL trouvée dans deploy/sql."
-fi
-
 for sql in "${SQL_FILES[@]}"; do
-  echo "  → $(basename "$sql")"
-  psql "$DATABASE_URL" \
-    -v ON_ERROR_STOP=1 \
-    -f "$sql" >/dev/null
+
+    filename="$(basename "$sql")"
+
+    already_applied="$(
+        psql "$DATABASE_URL" -Atqc \
+        "SELECT 1
+           FROM schema_migrations
+          WHERE filename = '$filename'
+          LIMIT 1;"
+    )"
+
+    if [[ "$already_applied" == "1" ]]; then
+        echo "  ✓ $filename"
+        continue
+    fi
+
+    echo "  → $filename"
+
+    # La migration et son enregistrement sont réalisés
+    # dans une même transaction.
+    {
+        echo "BEGIN;"
+        cat "$sql"
+        printf "\nINSERT INTO schema_migrations(filename) VALUES ('%s');\n" "$filename"
+        echo "COMMIT;"
+    } | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
+
+    echo "  ✓ $filename appliquée"
 done
 
-ok "${#SQL_FILES[@]} migration(s) contrôlée(s)/appliquée(s)"
+ok "Migrations PostgreSQL à jour"
 
 #
 # 8. Permissions PostgreSQL
