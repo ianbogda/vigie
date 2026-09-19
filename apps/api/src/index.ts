@@ -389,9 +389,30 @@ app.get('/api/budget/:ets',async(req:any,reply:any)=>{try{
  const servicesMap=new Map<string,any>();
  for(const x of parsed){const path=x.dimension.cgr||[];const service=path.find((p:any)=>p.level===4)||path.at(-1);if(!service)continue;const key=String(service.code).trim(),dir=direction(x)||'AUTRE';if(!servicesMap.has(key))servicesMap.set(key,{code:key,label:service.label||key,direction:dir,lines:[]});servicesMap.get(key).lines.push(x)}
  const services=[...servicesMap.values()].map((s:any)=>{const totalsRaw=metric(s.lines),totals=['DEP','REC'].includes(s.direction)?positive(totalsRaw):totalsRaw;const childrenMap=new Map<string,any>();for(const x of s.lines){const path=x.dimension.cgr||[],l5=path.find((p:any)=>p.level===5),l6=path.find((p:any)=>p.level===6);const k5=l5?cleanCode(l5.code,s.code):'Sans domaine';if(!childrenMap.has(k5))childrenMap.set(k5,{code:k5,label:l5?.label||k5,lines:[],activities:new Map()});const c=childrenMap.get(k5);c.lines.push(x);const k6=l6?cleanCode(l6.code,l5?.code):null;if(k6){if(!c.activities.has(k6))c.activities.set(k6,{code:k6,label:l6?.label||k6,lines:[]});c.activities.get(k6).lines.push(x)}}return {...s,...totals,rate:totals.budget?totals.committed/totals.budget:null,children:[...childrenMap.values()].map((c:any)=>({...c,...(['DEP','REC'].includes(s.direction)?positive(metric(c.lines)):metric(c.lines)),activities:[...c.activities.values()].map((a:any)=>({...a,...(['DEP','REC'].includes(s.direction)?positive(metric(a.lines)):metric(a.lines)),lines:undefined})),lines:undefined})),lines:undefined}}).sort((a:any,b:any)=>a.code.localeCompare(b.code,'fr'));
+ const budgetServiceOrder=['AP','VE','ALO','PAYE','SRH','OPC'];
+ const budgetServices=budgetServiceOrder.map((code:string)=>{
+  const xs=parsed.filter((x:any)=>String((x.dimension.cgr||[]).find((p:any)=>p.level===4)?.code||'').trim().toUpperCase()===code);
+  if(!xs.length)return null;
+  const first=xs[0],path=first.dimension.cgr||[],service=path.find((p:any)=>p.level===4),l2=path.find((p:any)=>p.level===2),l3=path.find((p:any)=>p.level===3);
+  const depLines=xs.filter((x:any)=>direction(x)==='DEP'),recLines=xs.filter((x:any)=>direction(x)==='REC');
+  const side=(sideLines:any[])=>{
+   const m=positive(metric(sideLines));
+   const domains=new Map<string,any>();
+   for(const x of sideLines){
+    const p=x.dimension.cgr||[],d5=p.find((q:any)=>q.level===5),d6=p.find((q:any)=>q.level===6);
+    const dcode=cleanCode(String(d5?.code||'Sans domaine'),code);
+    if(!domains.has(dcode))domains.set(dcode,{code:dcode,label:String(d5?.label||dcode).trim(),lines:[],activities:new Map()});
+    const d=domains.get(dcode);d.lines.push(x);
+    if(d6){const acode=cleanCode(String(d6.code||''),String(d5?.code||''));if(!d.activities.has(acode))d.activities.set(acode,{code:acode,label:String(d6.label||acode).trim(),lines:[]});d.activities.get(acode).lines.push(x)}
+   }
+   return {...m,rate:m.budget?m.accounted/m.budget:null,domains:[...domains.values()].map((d:any)=>{const dm=positive(metric(d.lines));return {code:d.code,label:d.label,...dm,rate:dm.budget?dm.accounted/dm.budget:null,activities:[...d.activities.values()].map((a:any)=>{const am=positive(metric(a.lines));return {code:a.code,label:a.label,...am,rate:am.budget?am.accounted/am.budget:null}})}})};
+  };
+  const expenses=side(depLines),revenues=side(recLines),balance=revenues.budget-expenses.budget;
+  return {code,label:String(service?.label||code).trim(),sectionCode:String(l2?.code||'').trim(),scopeCode:String(l3?.code||'').trim(),section:code==='OPC'?'INVESTMENT':code==='SRH'?'SPECIAL':'OPERATING',expenses,revenues,balance};
+ }).filter(Boolean);
  const signals=services.filter((s:any)=>s.direction==='DEP'&&s.budget>0&&s.committed/s.budget>=.85).map((s:any)=>({level:s.committed/s.budget>=1?'alert':'watch',service:s.code,title:`${s.code} : ${(s.committed/s.budget*100).toFixed(0)} % engagé`,detail:`${s.committed.toFixed(2)} € engagés sur ${s.budget.toFixed(2)} €.`}));
  const sourceRows=parsed.map((x:any)=>({lineNo:x.line_no,direction:direction(x)||'AUTRE',cgr:(x.dimension.cgr||[]).map((p:any)=>({level:p.level,code:p.code,label:p.label})),posts:(x.dimension.posts||[]).map((p:any)=>({level:p.level,code:p.code,label:p.label})),account:x.dimension.account||'',accountLabel:x.dimension.accountLabel||'',budget:n(x.budget),committed:n(x.committed),accounted:n(x.accounted),inProgress:n(x.in_progress),available:n(x.available)}));
- return {establishment:{id:establishment.id,uai:establishment.uai,name:establishment.name,opaleEntity:establishment.opale_entity},snapshot:{id:snap.id,date:snap.snapshot_date,filename:snap.source_filename,createdAt:snap.created_at,rowCount:snap.row_count},summary,totals,scopes,services,signals,sourceRows};
+ return {establishment:{id:establishment.id,uai:establishment.uai,name:establishment.name,opaleEntity:establishment.opale_entity},snapshot:{id:snap.id,date:snap.snapshot_date,filename:snap.source_filename,createdAt:snap.created_at,rowCount:snap.row_count},summary,totals,scopes,services,budgetServices,signals,sourceRows};
 }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Lecture budgétaire impossible'})}});
 
 app.get('/api/analysis', async () => {

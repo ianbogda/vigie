@@ -73,3 +73,7 @@ Le contrat attendu côté PCIF Académie est décrit dans `PCIF_ACADEMIE_TODO.md
 - vue Analyse conservant le sélecteur Dépenses / Recettes ;
 - vue Structure hiérarchique ;
 - vue Données sources avec les montants bruts Op@le et recherche.
+
+## v0.0.27 — Budget par service
+
+Synthèse budgétaire miroir par service : AP, VE, ALO, PAYE, services spéciaux le cas échéant, puis OPC. Les recettes et dépenses sont séparées avant agrégation.
