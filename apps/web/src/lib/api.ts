@@ -11,6 +11,7 @@ export const api = {
   logout: () => fetch('/api/auth/logout',{method:'POST'}).then(json<any>),
   dashboard: () => fetch('/api/dashboard').then(json<Dashboard>),
   budget: (ets:string) => fetch(`/api/budget/${encodeURIComponent(ets)}`).then(json<any>),
+  financial: (ets:string) => fetch(`/api/financial/${encodeURIComponent(ets)}`).then(json<any>),
   pcifStatus: () => fetch('/api/integrations/pcif/status').then(json<any>),
   syncPcif: (uais: string[]) => fetch('/api/integrations/pcif/sync', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({uais}) }).then(json<any>),
   establishments: () => fetch('/api/establishments').then(json<any>),
