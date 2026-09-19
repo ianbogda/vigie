@@ -1,6 +1,7 @@
 import { Database, Landmark, TrendingDown, TrendingUp, WalletCards } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { Eple, TreasuryPoint, TreasurySeries } from '../types/dashboard';
+import { BudgetView } from './BudgetView';
 
 const eur=(n?:number|null)=>n==null?'—':new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(n);
 const periodDate=(p?:string)=>{if(!p)return null;const raw=p.trim();let y:number,m:number;let match=raw.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?/);if(match){y=Number(match[1]);m=Number(match[2]);}else{match=raw.match(/^(\d{1,2})\/(\d{4})$/);if(!match)return null;m=Number(match[1]);y=Number(match[2]);}if(!Number.isInteger(y)||!Number.isInteger(m)||y<1900||y>2200||m<1||m>12)return null;const d=new Date(y,m-1,1);return Number.isNaN(d.getTime())?null:d};
@@ -37,4 +38,4 @@ function TreasuryView({current}:{current:Eple}){
   <div className="treasury-bottom"><section><h3>Analyse rapide</h3><p>Solde d'ouverture ZOUVER : <b>{eur(currentSeries.openingBalance)}</b>.</p><p>Variation du dernier mois : <b>{variation!=null&&variation>0?'+':''}{eur(variation)}</b>.</p><p>Amplitude observée : {eur((maxPoint?.balance??0)-(minPoint?.balance??0))}.</p></section><section><h3>Signaux Vigie</h3>{treasurySignals.length?treasurySignals.map(s=><p key={s.code} className={`treasury-signal ${s.level}`}><b>{s.title}</b><br/><span>{s.detail}</span></p>):<p className="treasury-ok">Aucun signal Trésorerie en cours.</p>}</section><section><h3>Données sources</h3><dl><dt>Compte</dt><dd>{t.account||'5151'}</dd><dt>Exercices disponibles</dt><dd>{series.map(s=>s.exercise).join(', ')}</dd><dt>Dernière période</dt><dd>{last?month(last.period):'—'}</dd><dt>Format</dt><dd>{t.sourceFormat||'Export Op@le 5151'}</dd></dl></section></div>
  </div>
 }
-export function DomainView({title,current}:{title:string;current:Eple|null}){if(title==='Trésorerie'&&current)return <TreasuryView current={current}/>;return <div className="page"><div className="empty-domain"><Database size={34}/><span>VUE MÉTIER</span><h2>{title}</h2><p>{current?`Périmètre : ${current.name}.`:'Vue agence.'} Cette vue utilisera le même moteur explicable que le cockpit, sans dupliquer les données.</p></div></div>}
+export function DomainView({title,current}:{title:string;current:Eple|null}){if(title==='Budget')return <BudgetView current={current}/>;if(title==='Trésorerie'&&current)return <TreasuryView current={current}/>;return <div className="page"><div className="empty-domain"><Database size={34}/><span>VUE MÉTIER</span><h2>{title}</h2><p>{current?`Périmètre : ${current.name}.`:'Vue agence.'} Cette vue utilisera le même moteur explicable que le cockpit, sans dupliquer les données.</p></div></div>}
