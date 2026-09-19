@@ -301,7 +301,25 @@ function parseFdr(buf: Buffer) {
 
 const cellText=(v:any)=>{if(v==null)return '';if(typeof v==='object'){if('text' in v)return String(v.text??'');if(Array.isArray(v.richText))return v.richText.map((x:any)=>x.text||'').join('');if('result' in v)return String(v.result??'')}return String(v).trim()};
 const cellNum=(v:any)=>{if(v==null||v==='')return 0;if(typeof v==='number')return Number.isFinite(v)?v:0;const n=Number(String(v).replace(/\s/g,'').replace(',','.'));return Number.isFinite(n)?n:0};
-async function xlsxData(buf:Buffer){const wb=new ExcelJS.Workbook();await wb.xlsx.load(buf as any);const ws=wb.getWorksheet('Donnees');if(!ws)throw new Error('Onglet Donnees absent.');const rows:any[][]=[];ws.eachRow({includeEmpty:false},r=>rows.push(r.values.slice(1) as any[]));return rows}
+async function xlsxData(buf: Buffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf as any);
+
+  const ws = wb.getWorksheet('Donnees');
+  if (!ws) throw new Error('Onglet Donnees absent.');
+
+  const rows: any[][] = [];
+
+  ws.eachRow({ includeEmpty: false }, row => {
+    const values = Array.isArray(row.values)
+      ? row.values.slice(1)
+      : Object.values(row.values);
+
+    rows.push(values as any[]);
+  });
+
+  return rows;
+}
 function headerIndex(headers:any[],name:string){return headers.findIndex(x=>cellText(x).trim()===name)}
 async function detectFinancialXlsx(buf:Buffer){const rows=await xlsxData(buf);for(let i=0;i<Math.min(6,rows.length);i++){const h=rows[i].map(cellText);if(h.includes('Solde débit')&&h.includes('Solde crédit')&&h.includes('Montant débit antérieur'))return 'EBLC';if(h.includes('Montant colonne 1')&&h.includes('CGR de niveau 1')){const first=rows[i+1]||[];const dir=cellText(first[31]);return dir==='DEP'?'YCONSDEP':dir==='REC'?'YCONSREC':null}if(h.includes('Montant en référence colonne 15')&&h.includes('Pièce')){const first=rows[i+1]||[];const account=cellText(first[3]);return /^40/.test(account)?'YBALAF':'YBALAC'}}return null}
 async function parseFinancialXlsx(buf:Buffer,type:string,contextEntity:string){const rows=await xlsxData(buf);const hi=rows.findIndex(r=>{const h=r.map(cellText);return type==='EBLC'?h.includes('Solde débit')&&h.includes('Compte'):type.startsWith('YCONS')?h.includes('CGR de niveau 1')&&h.includes('Montant colonne 1'):h.includes('Montant en référence colonne 15')&&h.includes('Pièce')});if(hi<0)throw new Error(`${type}: en-têtes non reconnus.`);const h=rows[hi].map(cellText),data=rows.slice(hi+1).filter(r=>cellText(r[0]));const entity=cellText(data[0]?.[type==='EBLC'?15:0])||contextEntity;const uai=cellText(data[0]?.[type==='EBLC'?29:77]);const dateText=cellText(data[0]?.[type==='EBLC'?34:type.startsWith('YCONS')?80:72]);const snapshotDate=parseFrDate(dateText)||new Date().toISOString().slice(0,10);const exercise=type==='EBLC'?Number(cellText(data[0]?.[30]).slice(-4))||new Date(snapshotDate).getFullYear():new Date(snapshotDate).getFullYear();const period=type==='EBLC'?cellText(data[0]?.[36]):null;
