@@ -2,8 +2,19 @@ import { Database, Landmark, TrendingDown, TrendingUp, WalletCards } from 'lucid
 import type { Eple, TreasuryPoint } from '../types/dashboard';
 
 const eur=(n?:number|null)=>n==null?'—':new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(n);
-const month=(p?:string)=>{if(!p)return '—';const [y,m]=p.split('-');return new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric'}).format(new Date(Number(y),Number(m)-1,1))};
-const shortMonth=(p:string)=>new Intl.DateTimeFormat('fr-FR',{month:'short'}).format(new Date(Number(p.slice(0,4)),Number(p.slice(5,7))-1,1)).replace('.','');
+const periodDate=(p?:string)=>{
+ if(!p)return null;
+ const raw=p.trim();
+ let y:number,m:number;
+ let match=raw.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?/);
+ if(match){y=Number(match[1]);m=Number(match[2]);}
+ else{match=raw.match(/^(\d{1,2})\/(\d{4})$/);if(!match)return null;m=Number(match[1]);y=Number(match[2]);}
+ if(!Number.isInteger(y)||!Number.isInteger(m)||y<1900||y>2200||m<1||m>12)return null;
+ const d=new Date(y,m-1,1);
+ return Number.isNaN(d.getTime())?null:d;
+};
+const month=(p?:string)=>{const d=periodDate(p);return d?new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric'}).format(d):(p||'—')};
+const shortMonth=(p:string)=>{const d=periodDate(p);return d?new Intl.DateTimeFormat('fr-FR',{month:'short'}).format(d).replace('.',''):p};
 function TreasuryChart({history}:{history:TreasuryPoint[]}){
  if(!history.length)return <div className="treasury-chart-empty">Historique insuffisant pour tracer la trajectoire.</div>;
  const w=1000,h=300,padX=56,padTop=24,padBottom=46,values=history.map(x=>x.balance),rawMin=Math.min(...values),rawMax=Math.max(...values),range=Math.max(rawMax-rawMin,1),margin=range*.16,min=Math.max(0,rawMin-margin),max=rawMax+margin,span=Math.max(max-min,1);
