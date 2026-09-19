@@ -51,11 +51,19 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='vigie'" | grep 
 PCIF_BASE_URL_OLD="$(sed -n 's/^PCIF_BASE_URL=//p' /etc/vigie.env 2>/dev/null || true)"
 PCIF_API_KEY_OLD="$(sed -n 's/^PCIF_API_KEY=//p' /etc/vigie.env 2>/dev/null || true)"
 PCIF_CACHE_OLD="$(sed -n 's/^PCIF_CACHE_MINUTES=//p' /etc/vigie.env 2>/dev/null || true)"
+ADMIN_EMAIL="${VIGIE_ADMIN_EMAIL:-$(sed -n 's/^VIGIE_ADMIN_EMAIL=//p' /etc/vigie.env 2>/dev/null || true)}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@vigie.local}"
+ADMIN_PASSWORD="${VIGIE_ADMIN_PASSWORD:-$(openssl rand -base64 24 | tr -d '=+/\n' | cut -c1-24)}"
+printf 'Vigie — compte administrateur initial\nURL: https://%s\nIdentifiant: %s\nMot de passe initial: %s\n' "$DOMAIN" "$ADMIN_EMAIL" "$ADMIN_PASSWORD" > /root/vigie-initial-admin.txt
+chmod 600 /root/vigie-initial-admin.txt
 cat > /etc/vigie.env <<ENV
 DATABASE_URL=postgresql://vigie:$DB_PASSWORD@127.0.0.1:5432/vigie
 PCIF_BASE_URL=${PCIF_BASE_URL_OLD:-https://pcif.eple-tools.fr}
 PCIF_API_KEY=${PCIF_API_KEY_OLD}
 PCIF_CACHE_MINUTES=${PCIF_CACHE_OLD:-10}
+VIGIE_ADMIN_EMAIL=$ADMIN_EMAIL
+VIGIE_ADMIN_PASSWORD=$ADMIN_PASSWORD
+VIGIE_SESSION_DAYS=1
 ENV
 chmod 600 /etc/vigie.env
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='vigie'" | grep -q 1 || sudo -u postgres createdb -O vigie vigie
@@ -89,6 +97,8 @@ systemctl daemon-reload
 systemctl enable vigie
 systemctl restart vigie
 sleep 2
+# Le secret de bootstrap n'est nécessaire qu'à la création du premier compte.
+sed -i '/^VIGIE_ADMIN_PASSWORD=/d' /etc/vigie.env
 
 log "Pré-contrôle DNS et réseau pour HTTPS"
 PUBLIC_IP="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
@@ -139,10 +149,10 @@ systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
 HEALTH_JSON="$(curl -fsS "http://127.0.0.1:$API_PORT/health")" || fail "L'API ne répond pas sur /health."
 grep -q '"version":"${EXPECTED_VERSION}" <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu ${EXPECTED_VERSION})."
-curl -fsS "http://127.0.0.1:$API_PORT/api/snapshots" >/dev/null || fail "La route API /api/snapshots ne répond pas."
-curl -fsS "http://127.0.0.1:$API_PORT/api/analysis" >/dev/null || fail "La route API /api/analysis ne répond pas."
-curl -fsS "http://127.0.0.1:$API_PORT/api/dashboard" >/dev/null || fail "La route API /api/dashboard ne répond pas."
-curl -kfsS --connect-timeout 10 "https://$DOMAIN/api/snapshots" >/dev/null || fail "Caddy ne route pas /api/* vers Vigie."
+AUTH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$API_PORT/api/auth/me)"
+[[ "$AUTH_STATUS" == "401" ]] || fail "Le contrôle d'accès ne répond pas comme attendu (HTTP $AUTH_STATUS)."
+HTTPS_AUTH_STATUS="$(curl -ks -o /dev/null -w '%{http_code}' --connect-timeout 10 https://$DOMAIN/api/auth/me)"
+[[ "$HTTPS_AUTH_STATUS" == "401" ]] || fail "Caddy ne route pas correctement l'API protégée (HTTP $HTTPS_AUTH_STATUS)."
 if ! curl -kfsS --connect-timeout 10 "https://$DOMAIN/" >/dev/null; then
   echo "HTTPS ne répond pas encore correctement. Diagnostic Caddy :" >&2
   journalctl -u caddy -n 80 --no-pager >&2 || true
@@ -158,6 +168,9 @@ API locale : http://127.0.0.1:$API_PORT
 
 Let's Encrypt : Caddy demandera et renouvellera automatiquement le certificat.
 Prérequis DNS : $DOMAIN doit pointer vers ce VPS et les ports 80/443 doivent être accessibles.
+
+Identifiants initiaux : /root/vigie-initial-admin.txt
+À supprimer après la première connexion et la création des comptes nécessaires.
 
 Commandes utiles :
   systemctl status vigie

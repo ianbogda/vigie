@@ -6,6 +6,9 @@ async function json<T>(response: Response): Promise<T> {
   return body as T;
 }
 export const api = {
+  me: () => fetch('/api/auth/me').then(json<any>),
+  login: (email:string,password:string) => fetch('/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})}).then(json<any>),
+  logout: () => fetch('/api/auth/logout',{method:'POST'}).then(json<any>),
   dashboard: () => fetch('/api/dashboard').then(json<Dashboard>),
   pcifStatus: () => fetch('/api/integrations/pcif/status').then(json<any>),
   syncPcif: (uais: string[]) => fetch('/api/integrations/pcif/sync', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({uais}) }).then(json<any>),
