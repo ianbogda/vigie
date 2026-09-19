@@ -12,6 +12,7 @@ export const api = {
   dashboard: () => fetch('/api/dashboard').then(json<Dashboard>),
   budget: (ets:string) => fetch(`/api/budget/${encodeURIComponent(ets)}`).then(json<any>),
   financial: (ets:string) => fetch(`/api/financial/${encodeURIComponent(ets)}`).then(json<any>),
+  accounting: (ets:string) => fetch(`/api/accounting/${encodeURIComponent(ets)}`).then(json<any>),
   aged: (ets:string,kind:'clients'|'suppliers') => fetch(`/api/aged/${encodeURIComponent(ets)}/${kind}`).then(json<any>),
   pcifStatus: () => fetch('/api/integrations/pcif/status').then(json<any>),
   syncPcif: (uais: string[]) => fetch('/api/integrations/pcif/sync', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({uais}) }).then(json<any>),
