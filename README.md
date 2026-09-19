@@ -62,3 +62,14 @@ PCIF_CACHE_MINUTES=10
 Contrôles : `GET /api/integrations/pcif/status` et synchronisation `POST /api/integrations/pcif/sync` avec `{ "uais": ["0280036M"] }`.
 
 Le contrat attendu côté PCIF Académie est décrit dans `PCIF_ACADEMIE_TODO.md`.
+
+
+## v0.0.26 — Budget en miroir
+
+- synthèse budgétaire unique avec dépenses à gauche et recettes à droite ;
+- normalisation des signes Op@le dans les vues de gestion ;
+- calcul explicite du solde `recettes - dépenses` et du besoin de financement ;
+- lecture par périmètre budgétaire (SG, services spéciaux, investissement) ;
+- vue Analyse conservant le sélecteur Dépenses / Recettes ;
+- vue Structure hiérarchique ;
+- vue Données sources avec les montants bruts Op@le et recherche.
