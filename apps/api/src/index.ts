@@ -11,7 +11,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.17';
+const VERSION = '0.0.18';
 const PCIF_BASE_URL = String(process.env.PCIF_BASE_URL || '').replace(/\/$/, '');
 const PCIF_API_KEY = String(process.env.PCIF_API_KEY || '');
 const PCIF_CACHE_MINUTES = Math.max(1, Number(process.env.PCIF_CACHE_MINUTES || 10));
@@ -22,6 +22,38 @@ const uaiOf = (...values: unknown[]) => {
   }
   return null;
 };
+
+const consistencyNorm=(value:unknown)=>String(value??'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+const DOMAIN_ALIASES:Record<string,string[]>={
+  'Budget':['budget','execution budgetaire','prevision budgetaire'],
+  'Fournisseurs':['depenses','depense','achats','achat','fournisseurs','fournisseur'],
+  'Comptabilité générale':['comptabilite generale','comptabilite','operations comptables'],
+  'Santé financière':['sante financiere','analyse financiere','situation financiere','fonds de roulement']
+};
+function pcifDomainFor(vigieDomain:string,domains:any[]){
+  const aliases=DOMAIN_ALIASES[vigieDomain]||[vigieDomain];
+  const wanted=aliases.map(consistencyNorm);
+  return domains.find((d:any)=>{
+    const label=consistencyNorm(d.label);
+    return wanted.some(x=>label===x||label.includes(x)||x.includes(label));
+  })||null;
+}
+function masteryConsistency(establishment:any,pcif:any){
+  const domains=Array.isArray(pcif?.raw_payload?.domains)?pcif.raw_payload.domains:[];
+  const vigieDomains=[...new Set((establishment.signals||[]).map((s:any)=>s.domain).filter(Boolean))] as string[];
+  return vigieDomains.map(domain=>{
+    const signals=(establishment.signals||[]).filter((s:any)=>s.domain===domain&&['watch','alert'].includes(s.level));
+    const p=pcifDomainFor(domain,domains);
+    if(!p)return {vigieDomain:domain,pcifDomain:null,status:'NOT_MAPPABLE',signals:signals.length,alerts:signals.filter((s:any)=>s.level==='alert').length,reasons:['Aucun domaine PCIF rapprochable automatiquement.']};
+    const completion=Number(p.completion||0), mastery=p.mastery==null?null:Number(p.mastery);
+    let status='COHERENT',reasons:string[]=[];
+    if(completion<50){status='PCIF_INSUFFICIENT';reasons=[`Diagnostic PCIF renseigné à ${completion} % sur ce domaine.`]}
+    else if(signals.length&&mastery!=null&&mastery>=75){status='REVIEW';reasons=[`Maîtrise PCIF déclarée à ${mastery} % et ${signals.length} signal${signals.length>1?'aux':' '} Vigie actif${signals.length>1?'s':''}.`]}
+    else if(signals.length){reasons=['Les observations Vigie sont cohérentes avec un niveau de maîtrise PCIF qui appelle déjà une vigilance.']}
+    else reasons=['Aucun signal Vigie significatif sur ce domaine.'];
+    return {vigieDomain:domain,pcifDomain:p.label,status,signals:signals.length,alerts:signals.filter((s:any)=>s.level==='alert').length,mastery,completion,reasons};
+  });
+}
 
 async function syncPcifSummaries(uais: string[]) {
   const wanted = [...new Set(uais.filter(Boolean))];
@@ -374,9 +406,12 @@ app.get('/api/dashboard', async () => {
       const stale=(await pool.query(`select count(*)::int n from pcif_context where uai=any($1::text[]) and updated_at > now()-($2||' minutes')::interval`,[uais,String(PCIF_CACHE_MINUTES)])).rows[0].n;
       if(Number(stale)<uais.length){try{await syncPcifSummaries(uais)}catch(err){app.log.warn({err},'Synchronisation PCIF non bloquante impossible')}}
     }
-    const pcif=(await pool.query('select establishment_key,uai,campaign_label,campaign_status,mastery_level,mastery_scale,completion,answered,total,open_actions,major_risks,overdue_actions,trend,attention,source_url,updated_at from pcif_context')).rows;
-    for(const e of establishments)e.pcif=pcif.find((p:any)=>(e.uai&&p.uai===e.uai)||p.establishment_key===e.id)||null;
-  }catch{}
+    const pcif=(await pool.query('select establishment_key,uai,campaign_label,campaign_status,mastery_level,mastery_scale,completion,answered,total,open_actions,major_risks,overdue_actions,trend,attention,source_url,raw_payload,updated_at from pcif_context')).rows;
+    for(const e of establishments){
+      e.pcif=pcif.find((p:any)=>(e.uai&&p.uai===e.uai)||p.establishment_key===e.id)||null;
+      if(e.pcif)e.pcif.consistency=masteryConsistency(e,e.pcif);
+    }
+  }catch(err){app.log.warn({err},'Construction du contexte PCIF impossible')}
   const signals=establishments.flatMap(e=>e.signals.map((s:any)=>({...s,establishment:e.name,establishmentId:e.id}))).sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
   const actionRequired=signals.filter((s:any)=>s.level==='alert').length, watch=signals.filter((s:any)=>s.level==='watch').length;
   const stale=establishments.reduce((n,e)=>n+e.staleSources.length,0);
