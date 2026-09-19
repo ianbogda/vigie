@@ -20,8 +20,9 @@ export type PcifContext = {
   trend?: string | number | null; attention?: PcifAttention[]; source_url?: string; updated_at?: string;
   consistency?: MasteryConsistency[];
 };
-export type TreasuryPoint = { period:string; debit:number; credit:number; movement:number; opening:number; balance:number };
-export type TreasuryContext = { account?:string; sourceFormat?:string; snapshotDate?:string; currentBalance?:number|null; currentMovement?:number|null; minBalance?:number|null; maxBalance?:number|null; history?:TreasuryPoint[]; warning?:string };
+export type TreasuryPoint = { period:string; exercise?:number; month?:number; debit:number; credit:number; movement:number; opening:number; balance:number };
+export type TreasurySeries = { exercise:number; openingBalance:number; currentBalance:number; minBalance:number; maxBalance:number; history:TreasuryPoint[] };
+export type TreasuryContext = { account?:string; sourceFormat?:string; snapshotDate?:string; currentExercise?:number|null; openingBalance?:number|null; currentBalance?:number|null; currentMovement?:number|null; minBalance?:number|null; maxBalance?:number|null; history?:TreasuryPoint[]; series?:TreasurySeries[]; warning?:string };
 export type Eple = {
   id: string; uai?: string | null; name: string; states: Record<string, State>; trend?: string; freshness: string | null;
   sources?: Record<string, unknown>; signals: Signal[]; budgetMetrics?: BudgetMetrics; fdrHistory?: FdrEntry[]; pcif?: PcifContext; treasury?: TreasuryContext;
