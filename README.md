@@ -84,3 +84,7 @@ Synthèse budgétaire miroir par service : AP, VE, ALO, PAYE, services spéciaux
 - résultat calculé par crédits nets − débits nets des classes 6 et 7 ;
 - exercices clos alimentés par les EBLC au 31/12 ; exercice courant affiché en atténué ;
 - YFDR : `D` est interprété comme une valeur définitive/consolidée.
+
+### v0.0.45 — CAF / IAF M9.6
+
+Vigie calcule désormais la CAF/IAF à partir des EBLC selon la méthode additive M9.6 : résultat + C68 − C78 − C776 + C675 − C775 − C777. La vue agence utilise la CAF/IAF pour le positionnement des EPLE. Le calcul des jours de FDR et de trésorerie est également aligné sur la M9.6 : charges nettes des comptes 60 à 65 et base 360 jours.
