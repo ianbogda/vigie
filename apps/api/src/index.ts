@@ -4,13 +4,14 @@ import multipart from '@fastify/multipart';
 import pg from 'pg';
 import ExcelJS from 'exceljs';
 import { parse as parseCsv } from 'csv-parse/sync';
+import { registerEpleTools } from './eple-tools.js';
 
 const { Pool } = pg;
 const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.15';
+const VERSION = '0.0.16';
 const PCIF_BASE_URL = String(process.env.PCIF_BASE_URL || '').replace(/\/$/, '');
 const PCIF_API_KEY = String(process.env.PCIF_API_KEY || '');
 const PCIF_CACHE_MINUTES = Math.max(1, Number(process.env.PCIF_CACHE_MINUTES || 10));
@@ -49,6 +50,7 @@ async function syncPcifSummaries(uais: string[]) {
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
 const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://vigie:vigie@127.0.0.1:5432/vigie' });
+registerEpleTools(app, pool, VERSION);
 
 const num = (v: unknown) => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
