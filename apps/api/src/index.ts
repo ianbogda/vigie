@@ -13,7 +13,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.22';
+const VERSION = '0.0.23';
 const PCIF_BASE_URL = String(process.env.PCIF_BASE_URL || '').replace(/\/$/, '');
 const PCIF_API_KEY = String(process.env.PCIF_API_KEY || '');
 const PCIF_CACHE_MINUTES = Math.max(1, Number(process.env.PCIF_CACHE_MINUTES || 10));
@@ -356,8 +356,15 @@ app.post('/api/integrations/pcif/sync', async (req:any, reply:any) => {
   catch(e:any){ req.log.warn(e); return reply.code(502).send({error:e.message||'Synchronisation PCIF impossible'}); }
 });
 
+app.get('/api/establishments',async()=>({establishments:(await pool.query(`select id,uai,name,opale_entity,is_active,created_at,updated_at,archived_at from establishments order by is_active desc,name`)).rows}));
+app.post('/api/establishments',async(req:any,reply:any)=>{const b=req.body||{},uai=String(b.uai||'').trim().toUpperCase(),name=String(b.name||'').trim(),opale=String(b.opaleEntity||'').trim().toUpperCase()||null;if(!/^[0-9]{7,8}[A-Z]$/.test(uai))return reply.code(400).send({error:'UAI invalide.'});if(!name)return reply.code(400).send({error:'Le nom est obligatoire.'});try{const q=await pool.query(`insert into establishments(uai,name,opale_entity) values($1,$2,$3) returning *`,[uai,name,opale]);return {ok:true,establishment:q.rows[0]}}catch(e:any){return reply.code(409).send({error:e.code==='23505'?'UAI ou code ETS déjà utilisé.':e.message})}});
+app.put('/api/establishments/:id',async(req:any,reply:any)=>{const b=req.body||{},name=String(b.name||'').trim(),opale=String(b.opaleEntity||'').trim().toUpperCase()||null;if(!name)return reply.code(400).send({error:'Le nom est obligatoire.'});try{const q=await pool.query(`update establishments set name=$2,opale_entity=$3,is_active=true,archived_at=null,updated_at=now() where id=$1 returning *`,[req.params.id,name,opale]);if(!q.rowCount)return reply.code(404).send({error:'Établissement introuvable.'});return {ok:true,establishment:q.rows[0]}}catch(e:any){return reply.code(409).send({error:e.code==='23505'?'Code ETS déjà utilisé.':e.message})}});
+app.post('/api/establishments/:id/restore',async(req:any,reply:any)=>{const q=await pool.query(`update establishments set is_active=true,archived_at=null,updated_at=now() where id=$1 returning *`,[req.params.id]);return q.rowCount?{ok:true,establishment:q.rows[0]}:reply.code(404).send({error:'Établissement introuvable.'})});
+app.delete('/api/establishments/:id',async(req:any,reply:any)=>{const c=await pool.connect();try{await c.query('begin');const e=(await c.query('select * from establishments where id=$1 for update',[req.params.id])).rows[0];if(!e){await c.query('rollback');return reply.code(404).send({error:'Établissement introuvable.'})}const counts=(await c.query(`select (select count(*) from accounting_imports where opale_entity=$1)+(select count(*) from balance_snapshots where opale_entity=$1)+(select count(*) from budget_snapshots where opale_entity=$1)+(select count(*) from pcif_context where uai=$2) n`,[e.opale_entity||'',e.uai])).rows[0];if(Number(counts.n)>0){const q=await c.query(`update establishments set is_active=false,archived_at=now(),updated_at=now() where id=$1 returning *`,[e.id]);await c.query('commit');return {ok:true,mode:'archived',establishment:q.rows[0]}}await c.query('delete from establishments where id=$1',[e.id]);await c.query('commit');return {ok:true,mode:'deleted'}}catch(err:any){await c.query('rollback');return reply.code(400).send({error:err.message})}finally{c.release()}});
+
 app.get('/api/dashboard', async () => {
-  const [balances,budgets,purchases,fdrs,treasuries] = await Promise.all([
+  const [registry,balances,budgets,purchases,fdrs,treasuries] = await Promise.all([
+    pool.query(`select id,uai,name,opale_entity,is_active from establishments order by name`),
     pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,opale_entity_label,snapshot_date,created_at from balance_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`),
     pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,snapshot_date,created_at from budget_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`),
     pool.query(`select distinct on (establishment_name) id,establishment_name source_key,establishment_name,snapshot_date,created_at from purchase_snapshots order by establishment_name,snapshot_date desc,created_at desc`),
@@ -365,12 +372,14 @@ app.get('/api/dashboard', async () => {
     pool.query(`select distinct on (opale_entity) id,opale_entity source_key,opale_entity,opale_entity establishment_name,source_format,period_to snapshot_date,period_to,created_at from accounting_imports order by opale_entity,period_to desc nulls last,created_at desc`)
   ]);
   const map=new Map<string,any>();
-  const ensure=(key:string,name?:string)=>{if(!map.has(key))map.set(key,{key,name:name||key,sources:{balance:null,budget:null,purchases:null,fdr:null,treasury:null},signals:[]});return map.get(key)};
-  for(const x of balances.rows){const e=ensure(x.source_key,x.opale_entity_label||x.establishment_name);e.name=x.opale_entity_label||e.name;e.sources.balance=x}
-  for(const x of budgets.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.budget=x}
-  for(const x of purchases.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.purchases=x}
-  for(const x of fdrs.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.fdr=x}
-  for(const x of treasuries.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.treasury=x}
+  const archived=new Set(registry.rows.filter((x:any)=>!x.is_active).flatMap((x:any)=>[x.opale_entity,x.uai].filter(Boolean)));
+  const ensure=(key:string,name?:string)=>{if(archived.has(key))return null;if(!map.has(key))map.set(key,{key,name:name||key,uai:null,registryId:null,opaleEntity:key,sources:{balance:null,budget:null,purchases:null,fdr:null,treasury:null},signals:[]});return map.get(key)};
+  for(const x of registry.rows.filter((x:any)=>x.is_active)){const key=x.opale_entity||x.uai;const e=ensure(key,x.name);if(e){e.name=x.name;e.uai=x.uai;e.registryId=x.id;e.opaleEntity=x.opale_entity||null}}
+  for(const x of balances.rows){const e=ensure(x.source_key,x.opale_entity_label||x.establishment_name);if(e){e.name=e.registryId?e.name:(x.opale_entity_label||e.name);e.sources.balance=x}}
+  for(const x of budgets.rows){const e=ensure(x.source_key,x.establishment_name);if(e)e.sources.budget=x}
+  for(const x of purchases.rows){const e=ensure(x.source_key,x.establishment_name);if(e)e.sources.purchases=x}
+  for(const x of fdrs.rows){const e=ensure(x.source_key,x.establishment_name);if(e)e.sources.fdr=x}
+  for(const x of treasuries.rows){const e=ensure(x.source_key,x.establishment_name);if(e)e.sources.treasury=x}
   const severity=(xs:any[])=>xs.some(x=>x.level==='alert')?'alert':xs.some(x=>x.level==='watch')?'watch':'ok';
   const establishments:any[]=[]; let totalBudget=0,totalAvailable=0,totalAccounted=0,totalCommitted=0,totalInProgress=0;
   for(const e of map.values()){
@@ -405,12 +414,12 @@ app.get('/api/dashboard', async () => {
       e.signals.push(...(e.treasury?.signals||[]));
       states.treasury=severity(e.signals.filter((x:any)=>x.domain==='Trésorerie'));
     }
-    const uai=uaiOf(e.sources.balance?.opale_entity_label,e.sources.balance?.establishment_name,e.sources.budget?.establishment_name,e.sources.purchases?.establishment_name,e.sources.fdr?.establishment_name,e.sources.treasury?.establishment_name,e.name);
+    const uai=e.uai||uaiOf(e.sources.balance?.opale_entity_label,e.sources.balance?.establishment_name,e.sources.budget?.establishment_name,e.sources.purchases?.establishment_name,e.sources.fdr?.establishment_name,e.sources.treasury?.establishment_name,e.name);
     const dates=Object.values(e.sources).filter(Boolean).map((x:any)=>String(x.snapshot_date).slice(0,10)).sort();
     const freshness=dates.length?dates[dates.length-1]:null;
     const staleSources=Object.entries(e.sources).filter(([,x]:any)=>x&&((Date.now()-new Date(x.snapshot_date).getTime())/86400000)>30).map(([k])=>k);
     e.signals.sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
-    establishments.push({id:e.key,uai,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[],treasury:e.treasury||null});
+    establishments.push({id:e.key,registryId:e.registryId,opaleEntity:e.opaleEntity,uai,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[],treasury:e.treasury||null});
   }
   try{
     const uais=establishments.map((e:any)=>e.uai).filter(Boolean);
