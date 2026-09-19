@@ -11,7 +11,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.16';
+const VERSION = '0.0.17';
 const PCIF_BASE_URL = String(process.env.PCIF_BASE_URL || '').replace(/\/$/, '');
 const PCIF_API_KEY = String(process.env.PCIF_API_KEY || '');
 const PCIF_CACHE_MINUTES = Math.max(1, Number(process.env.PCIF_CACHE_MINUTES || 10));
@@ -37,10 +37,10 @@ async function syncPcifSummaries(uais: string[]) {
   for (const x of summaries) {
     const uai=uaiOf(x.uai,x.establishment?.uai); if(!uai) continue;
     const campaign=x.campaign||{}, mastery=x.mastery||{}, risks=x.risks||{}, actions=x.actions||{};
-    await pool.query(`insert into pcif_context(establishment_key,uai,campaign_label,mastery_level,open_actions,major_risks,overdue_actions,trend,source_url,raw_payload,updated_at)
-      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
-      on conflict(establishment_key) do update set uai=excluded.uai,campaign_label=excluded.campaign_label,mastery_level=excluded.mastery_level,open_actions=excluded.open_actions,major_risks=excluded.major_risks,overdue_actions=excluded.overdue_actions,trend=excluded.trend,source_url=excluded.source_url,raw_payload=excluded.raw_payload,updated_at=now()`,
-      [uai,uai,campaign.label||campaign.id||x.campaign_label||null,mastery.level??x.mastery_level??null,actions.open??x.open_actions??0,risks.major??x.major_risks??0,actions.overdue??x.overdue_actions??0,mastery.trend??x.trend??null,x.sourceUrl||x.source_url||`${PCIF_BASE_URL}/`,JSON.stringify(x)]);
+    await pool.query(`insert into pcif_context(establishment_key,uai,campaign_label,campaign_status,mastery_level,mastery_scale,completion,answered,total,open_actions,major_risks,overdue_actions,trend,attention,source_url,raw_payload,updated_at)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,now())
+      on conflict(establishment_key) do update set uai=excluded.uai,campaign_label=excluded.campaign_label,campaign_status=excluded.campaign_status,mastery_level=excluded.mastery_level,mastery_scale=excluded.mastery_scale,completion=excluded.completion,answered=excluded.answered,total=excluded.total,open_actions=excluded.open_actions,major_risks=excluded.major_risks,overdue_actions=excluded.overdue_actions,trend=excluded.trend,attention=excluded.attention,source_url=excluded.source_url,raw_payload=excluded.raw_payload,updated_at=now()`,
+      [uai,uai,campaign.label||campaign.id||x.campaign_label||null,campaign.status||null,mastery.level??x.mastery_level??null,mastery.scale||'PERCENT',mastery.completion??0,mastery.answered??0,mastery.total??0,actions.open??x.open_actions??0,risks.major??x.major_risks??0,actions.overdue??x.overdue_actions??0,mastery.trend??x.trend??null,JSON.stringify(x.attention||[]),x.sourceUrl||x.source_url||`${PCIF_BASE_URL}/`,JSON.stringify(x)]);
     synced++;
   }
   return {configured:true,synced,received:summaries.length};
@@ -374,7 +374,7 @@ app.get('/api/dashboard', async () => {
       const stale=(await pool.query(`select count(*)::int n from pcif_context where uai=any($1::text[]) and updated_at > now()-($2||' minutes')::interval`,[uais,String(PCIF_CACHE_MINUTES)])).rows[0].n;
       if(Number(stale)<uais.length){try{await syncPcifSummaries(uais)}catch(err){app.log.warn({err},'Synchronisation PCIF non bloquante impossible')}}
     }
-    const pcif=(await pool.query('select establishment_key,uai,campaign_label,mastery_level,open_actions,major_risks,overdue_actions,trend,source_url,updated_at from pcif_context')).rows;
+    const pcif=(await pool.query('select establishment_key,uai,campaign_label,campaign_status,mastery_level,mastery_scale,completion,answered,total,open_actions,major_risks,overdue_actions,trend,attention,source_url,updated_at from pcif_context')).rows;
     for(const e of establishments)e.pcif=pcif.find((p:any)=>(e.uai&&p.uai===e.uai)||p.establishment_key===e.id)||null;
   }catch{}
   const signals=establishments.flatMap(e=>e.signals.map((s:any)=>({...s,establishment:e.name,establishmentId:e.id}))).sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
