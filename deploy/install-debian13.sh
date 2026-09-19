@@ -8,6 +8,7 @@ DOMAIN="${VIGIE_DOMAIN:-vigie.eple-tools.fr}"
 API_PORT="${VIGIE_API_PORT:-3211}"
 LE_EMAIL="${LETSENCRYPT_EMAIL:-}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EXPECTED_VERSION="$(node -p "require('${SOURCE_DIR}/package.json').version")"
 
 log(){ printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 fail(){ printf '\n\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -137,7 +138,7 @@ log "Contrôles"
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
 HEALTH_JSON="$(curl -fsS "http://127.0.0.1:$API_PORT/health")" || fail "L'API ne répond pas sur /health."
-grep -q '"version":"0.0.15"' <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu 0.0.15)."
+grep -q "\"version\":\"${EXPECTED_VERSION}\"" <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu ${EXPECTED_VERSION})."
 curl -fsS "http://127.0.0.1:$API_PORT/api/snapshots" >/dev/null || fail "La route API /api/snapshots ne répond pas."
 curl -fsS "http://127.0.0.1:$API_PORT/api/analysis" >/dev/null || fail "La route API /api/analysis ne répond pas."
 curl -fsS "http://127.0.0.1:$API_PORT/api/dashboard" >/dev/null || fail "La route API /api/dashboard ne répond pas."
@@ -151,7 +152,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null
 
 cat <<DONE
 
-Vigie v0.0.15 est installée.
+Vigie v${EXPECTED_VERSION} est installée.
 URL cible : https://$DOMAIN
 API locale : http://127.0.0.1:$API_PORT
 

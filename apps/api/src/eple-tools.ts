@@ -9,7 +9,7 @@ function authorized(req:FastifyRequest){
  return a.length===b.length&&timingSafeEqual(a,b);
 }
 const uaiOf=(...v:unknown[])=>{for(const x of v){const m=String(x??"").toUpperCase().match(/\b0?([0-9]{7}[A-Z])\b/);if(m)return m[0]}return null};
-const processCode=(domain:string,code:string)=>code.startsWith("ACH-")?"DEPENSE_FACTURE":code.startsWith("BUD-")?"BUDGET":code.startsWith("FDR-")?"BUDGET":domain.includes("Comptabilité")?"TRESORERIE":null;
+const processCode=(domain:string,code:string)=>code.startsWith("TRE-")?"TRE":code.startsWith("ACH-")?"DEPENSE_FACTURE":code.startsWith("BUD-")?"BUDGET":code.startsWith("FDR-")?"BUDGET":domain.includes("Comptabilité")?"TRESORERIE":null;
 const level=(x:string)=>x==="alert"?{type:"ALERT",severity:3}:x==="watch"?{type:"WARNING",severity:2}:{type:"INFO",severity:1};
 
 export function registerEpleTools(app:FastifyInstance,pool:Pool,version:string){

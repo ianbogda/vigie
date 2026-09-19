@@ -5,13 +5,14 @@ import pg from 'pg';
 import ExcelJS from 'exceljs';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { registerEpleTools } from './eple-tools.js';
+import { isTreasury5151Csv, parseTreasury5151, treasuryContext } from './treasury.js';
 
 const { Pool } = pg;
 const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.18';
+const VERSION = '0.0.19';
 const PCIF_BASE_URL = String(process.env.PCIF_BASE_URL || '').replace(/\/$/, '');
 const PCIF_API_KEY = String(process.env.PCIF_API_KEY || '');
 const PCIF_CACHE_MINUTES = Math.max(1, Number(process.env.PCIF_CACHE_MINUTES || 10));
@@ -28,7 +29,8 @@ const DOMAIN_ALIASES:Record<string,string[]>={
   'Budget':['budget','execution budgetaire','prevision budgetaire'],
   'Fournisseurs':['depenses','depense','achats','achat','fournisseurs','fournisseur'],
   'Comptabilité générale':['comptabilite generale','comptabilite','operations comptables'],
-  'Santé financière':['sante financiere','analyse financiere','situation financiere','fonds de roulement']
+  'Santé financière':['sante financiere','analyse financiere','situation financiere','fonds de roulement'],
+  'Trésorerie':['tresorerie','disponibilites','banque','compte 5151']
 };
 function pcifDomainFor(vigieDomain:string,domains:any[]){
   const aliases=DOMAIN_ALIASES[vigieDomain]||[vigieDomain];
@@ -295,16 +297,18 @@ app.get('/api/imports',async()=>({
  balances:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,created_at from balance_snapshots order by created_at desc limit 20')).rows,
  budgets:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,created_at from budget_snapshots order by created_at desc limit 20')).rows,
  purchases:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,rejected_row_count,created_at from purchase_snapshots order by created_at desc limit 20')).rows,
- fdr:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,created_at from fdr_snapshots order by created_at desc limit 20')).rows
+ fdr:(await pool.query('select id,establishment_name,snapshot_date,source_filename,row_count,created_at from fdr_snapshots order by created_at desc limit 20')).rows,
+ treasury:(await pool.query('select id,establishment_name,opale_entity,account,snapshot_date,source_filename,source_format,row_count,created_at from treasury_snapshots order by created_at desc limit 20')).rows
 }));
 app.post('/api/import/opale',async(req:any,reply:any)=>{try{
  const file=await req.file(); if(!file)return reply.code(400).send({error:'Fichier manquant'}); const buf=await file.toBuffer(); const name=file.filename.toLowerCase(); const client=await pool.connect();
  try{
   if(name.endsWith('.lis') && decodeLis(buf).includes('entitiesTrialBalance')){const p=parseLis(buf); const alerts=analyse(p.rows); await client.query('begin'); const establishment=p.entityLabel||p.entity||'Établissement non renseigné'; const s=(await client.query('insert into balance_snapshots(establishment_name,snapshot_date,source_filename,sheet_name,row_count,source_format,opale_entity,opale_entity_label) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[establishment,new Date().toISOString().slice(0,10),file.filename,p.sheet,p.rows.length,p.format,p.entity,p.entityLabel])).rows[0]; for(const r of p.rows)await client.query('insert into balance_lines(snapshot_id,line_no,account,label,prior_debit,prior_credit,period_debit,period_credit,debit,credit,net) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[s.id,r.line,r.account,r.label,r.priorDebit,r.priorCredit,r.periodDebit,r.periodCredit,r.debit,r.credit,r.net]); for(const a of alerts)await client.query('insert into accounting_alerts(snapshot_id,rule_code,severity,title,detail,account,amount) values($1,$2,$3,$4,$5,$6,$7)',[s.id,a.code,a.level,a.title,a.detail,a.account,a.amount]); await client.query('commit'); return {ok:true,type:'balance',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length,rejectedRows:p.sourceRows-p.rows.length},alerts}}
   if(name.endsWith('.lis') && /^DATASHEET=Donnees/m.test(decodeLis(buf))){const p=parseBudgetLis(buf); await client.query('begin'); const s=(await client.query('insert into budget_snapshots(establishment_name,opale_entity,snapshot_date,source_filename,row_count) values($1,$2,$3,$4,$5) returning *',[p.establishment||p.entity,p.entity,p.snapshotDate||new Date().toISOString().slice(0,10),file.filename,p.rows.length])).rows[0]; for(const r of p.rows)await client.query('insert into budget_lines(snapshot_id,line_no,raw_dimensions,budget,committed,accounted,in_progress,available) values($1,$2,$3,$4,$5,$6,$7,$8)',[s.id,r.line,JSON.stringify(r.dimensions),r.budget,r.committed,r.accounted,r.inProgress,r.available]); await client.query('commit'); return {ok:true,type:'budget',snapshot:s,control:{importedRows:p.rows.length}}}
+  if(name.endsWith('.csv') && isTreasury5151Csv(buf)){const p=parseTreasury5151(buf); await client.query('begin'); const s=(await client.query('insert into treasury_snapshots(establishment_name,opale_entity,account,snapshot_date,source_filename,source_format,row_count) values($1,$2,$3,$4,$5,$6,$7) returning *',[p.establishment,p.entity,p.account,p.snapshotDate,file.filename,p.sourceFormat,p.rows.length])).rows[0]; for(const r of p.rows)await client.query('insert into treasury_movements(snapshot_id,line_no,period,period_date,journal,account,account_label,debit,credit,movement,movement_kind,raw_data) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[s.id,r.line,r.period,r.periodDate,r.journal,r.account,r.accountLabel,r.debit,r.credit,r.debit-r.credit,r.movementKind,JSON.stringify(r.raw)]); await client.query('commit'); return {ok:true,type:'treasury5151',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length,rejectedRows:p.sourceRows-p.rows.length}}}
   if(name.endsWith('.csv') && detectCsvType(buf)==='fdr'){const p=parseFdr(buf); await client.query('begin'); const s=(await client.query('insert into fdr_snapshots(establishment_name,snapshot_date,source_filename,row_count) values($1,$2,$3,$4) returning *',[p.establishment,p.snapshotDate,file.filename,p.rows.length])).rows[0]; for(const r of p.rows)await client.query('insert into fdr_lines(snapshot_id,exercise,amount,direction,is_final,establishment,state,source_modified_at) values($1,$2,$3,$4,$5,$6,$7,$8)',[s.id,r.exercise,r.amount,r.direction,r.isFinal,r.establishment,r.state,r.sourceModifiedAt]); await client.query('commit'); return {ok:true,type:'fdr',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length}}}
   if(name.endsWith('.csv') && detectCsvType(buf)==='clca'){const p=parseClca(buf); await client.query('begin'); const s=(await client.query('insert into purchase_snapshots(establishment_name,snapshot_date,source_filename,row_count,rejected_row_count) values($1,$2,$3,$4,$5) returning *',[p.establishment,p.snapshotDate,file.filename,p.rows.length,p.rejectedRows])).rows[0]; for(const r of p.rows)await client.query('insert into purchase_lines(snapshot_id,line_no,establishment,order_number,internal_order_number,sub_number,market,supplier,order_date,currency,order_line,stage,article,article_label,quantity,received_quantity,receipt_date,invoiced_quantity,warehouse,expected_delivery_date,purchase_mode,receipt_balance_quantity,invoice_balance_quantity,ordered_price,received_price,invoice_price,invoice_amount,account,cgr_a,cgr_b,creator,modifier,raw_data) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)',[s.id,r.line,r.establishment,r.orderNumber,r.internalOrderNumber,r.subNumber,r.market,r.supplier,r.orderDate,r.currency,r.orderLine,r.stage,r.article,r.articleLabel,r.quantity,r.receivedQuantity,r.receiptDate,r.invoicedQuantity,r.warehouse,r.expectedDeliveryDate,r.purchaseMode,r.receiptBalanceQuantity,r.invoiceBalanceQuantity,r.orderedPrice,r.receivedPrice,r.invoicePrice,r.invoiceAmount,r.account,r.cgrA,r.cgrB,r.creator,r.modifier,JSON.stringify(r.raw)]); await client.query('commit'); return {ok:true,type:'clca',snapshot:s,control:{sourceRows:p.sourceRows,importedRows:p.rows.length,rejectedRows:p.rejectedRows}}}
-  return reply.code(400).send({error:'Type Op@le non reconnu. Formats gérés : balance .lis, budget .lis, CLCA .csv et FDR .csv.'});
+  return reply.code(400).send({error:'Type Op@le non reconnu. Formats gérés : balance .lis, budget .lis, mouvements 5151 .csv, CLCA .csv et FDR .csv.'});
  }catch(e){try{await client.query('rollback')}catch{};throw e}finally{client.release()}
 }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Import impossible'})}});
 
@@ -352,22 +356,24 @@ app.post('/api/integrations/pcif/sync', async (req:any, reply:any) => {
 });
 
 app.get('/api/dashboard', async () => {
-  const [balances,budgets,purchases,fdrs] = await Promise.all([
+  const [balances,budgets,purchases,fdrs,treasuries] = await Promise.all([
     pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,opale_entity_label,snapshot_date,created_at from balance_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`),
     pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,snapshot_date,created_at from budget_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`),
     pool.query(`select distinct on (establishment_name) id,establishment_name source_key,establishment_name,snapshot_date,created_at from purchase_snapshots order by establishment_name,snapshot_date desc,created_at desc`),
-    pool.query(`select distinct on (establishment_name) id,establishment_name source_key,establishment_name,snapshot_date,created_at from fdr_snapshots order by establishment_name,snapshot_date desc,created_at desc`)
+    pool.query(`select distinct on (establishment_name) id,establishment_name source_key,establishment_name,snapshot_date,created_at from fdr_snapshots order by establishment_name,snapshot_date desc,created_at desc`),
+    pool.query(`select distinct on (coalesce(nullif(opale_entity,''),establishment_name)) id,coalesce(nullif(opale_entity,''),establishment_name) source_key,establishment_name,opale_entity,account,source_format,snapshot_date,created_at from treasury_snapshots order by coalesce(nullif(opale_entity,''),establishment_name),snapshot_date desc,created_at desc`)
   ]);
   const map=new Map<string,any>();
-  const ensure=(key:string,name?:string)=>{if(!map.has(key))map.set(key,{key,name:name||key,sources:{balance:null,budget:null,purchases:null,fdr:null},signals:[]});return map.get(key)};
+  const ensure=(key:string,name?:string)=>{if(!map.has(key))map.set(key,{key,name:name||key,sources:{balance:null,budget:null,purchases:null,fdr:null,treasury:null},signals:[]});return map.get(key)};
   for(const x of balances.rows){const e=ensure(x.source_key,x.opale_entity_label||x.establishment_name);e.name=x.opale_entity_label||e.name;e.sources.balance=x}
   for(const x of budgets.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.budget=x}
   for(const x of purchases.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.purchases=x}
   for(const x of fdrs.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.fdr=x}
+  for(const x of treasuries.rows){const e=ensure(x.source_key,x.establishment_name);e.sources.treasury=x}
   const severity=(xs:any[])=>xs.some(x=>x.level==='alert')?'alert':xs.some(x=>x.level==='watch')?'watch':'ok';
   const establishments:any[]=[]; let totalBudget=0,totalAvailable=0,totalAccounted=0,totalCommitted=0,totalInProgress=0;
   for(const e of map.values()){
-    const states:any={budget:'missing',financial:'missing',recovery:'missing',suppliers:'missing',accounting:'missing'};
+    const states:any={budget:'missing',financial:'missing',recovery:'missing',suppliers:'missing',accounting:'missing',treasury:'missing'};
     if(e.sources.budget){
       const q=(await pool.query(`select coalesce(sum(budget),0) budget,coalesce(sum(committed),0) committed,coalesce(sum(accounted),0) accounted,coalesce(sum(in_progress),0) in_progress,coalesce(sum(available),0) available from budget_lines where snapshot_id=$1`,[e.sources.budget.id])).rows[0];
       const m={budget:Number(q.budget),committed:Number(q.committed),accounted:Number(q.accounted),inProgress:Number(q.in_progress),available:Number(q.available)}; e.budgetMetrics=m;
@@ -393,12 +399,17 @@ app.get('/api/dashboard', async () => {
       if(h.length){const cur=h[0],prev=h.find((x:any)=>x.exercise===cur.exercise-1);if(prev){const d=cur.amount-prev.amount;trend=d<0?'down':d>0?'up':'stable';if(d<0)e.signals.push({code:'FDR-DOWN',level:'watch',domain:'Santé financière',title:'Fonds de roulement en diminution',detail:`${cur.exercise}${cur.is_final?' définitif':' provisoire'} : ${cur.amount.toFixed(2)} € ; ${prev.exercise} : ${prev.amount.toFixed(2)} €.`,amount:d});}}
       states.financial=severity(e.signals.filter((x:any)=>x.domain==='Santé financière'));
     }
-    const uai=uaiOf(e.sources.balance?.opale_entity_label,e.sources.balance?.establishment_name,e.sources.budget?.establishment_name,e.sources.purchases?.establishment_name,e.sources.fdr?.establishment_name,e.name);
+    if(e.sources.treasury){
+      e.treasury=await treasuryContext(pool,e.sources.treasury);
+      e.signals.push(...(e.treasury?.signals||[]));
+      states.treasury=severity(e.signals.filter((x:any)=>x.domain==='Trésorerie'));
+    }
+    const uai=uaiOf(e.sources.balance?.opale_entity_label,e.sources.balance?.establishment_name,e.sources.budget?.establishment_name,e.sources.purchases?.establishment_name,e.sources.fdr?.establishment_name,e.sources.treasury?.establishment_name,e.name);
     const dates=Object.values(e.sources).filter(Boolean).map((x:any)=>String(x.snapshot_date).slice(0,10)).sort();
     const freshness=dates.length?dates[dates.length-1]:null;
     const staleSources=Object.entries(e.sources).filter(([,x]:any)=>x&&((Date.now()-new Date(x.snapshot_date).getTime())/86400000)>30).map(([k])=>k);
     e.signals.sort((a:any,b:any)=>(a.level==='alert'?0:1)-(b.level==='alert'?0:1)||Math.abs(b.amount||0)-Math.abs(a.amount||0));
-    establishments.push({id:e.key,uai,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[]});
+    establishments.push({id:e.key,uai,name:e.name,states,trend,freshness,sources:e.sources,staleSources,signals:e.signals,budgetMetrics:e.budgetMetrics||null,fdrHistory:e.fdrHistory||[],treasury:e.treasury||null});
   }
   try{
     const uais=establishments.map((e:any)=>e.uai).filter(Boolean);
