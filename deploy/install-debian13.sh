@@ -148,7 +148,7 @@ log "Contrôles"
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
 systemctl is-active --quiet caddy || fail "Caddy n'est pas actif."
 HEALTH_JSON="$(curl -fsS "http://127.0.0.1:$API_PORT/health")" || fail "L'API ne répond pas sur /health."
-grep -q '"version":"${EXPECTED_VERSION}" <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu ${EXPECTED_VERSION})."
+grep -q '"version":"${EXPECTED_VERSION}" <<<"$HEALTH_JSON" || fail "Mauvaise version API chargée : $HEALTH_JSON (attendu ${EXPECTED_VERSION})."'
 AUTH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$API_PORT/api/auth/me)"
 [[ "$AUTH_STATUS" == "401" ]] || fail "Le contrôle d'accès ne répond pas comme attendu (HTTP $AUTH_STATUS)."
 HTTPS_AUTH_STATUS="$(curl -ks -o /dev/null -w '%{http_code}' --connect-timeout 10 https://$DOMAIN/api/auth/me)"
