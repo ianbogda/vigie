@@ -34,7 +34,7 @@ export function ContextualHelp({view}:{view:string}) {
         <section><h3>Fichier(s) attendu(s)</h3><div className="help-files">{spec.sources.map((entry,index)=>{
           if(isOpaleSourceId(entry)){
             const source=OPALE_HELP_REGISTRY[entry];
-            return <div key={source.id}><FileSpreadsheet size={19}/><div><b>{source.id} — {source.label}</b><small>{source.format}{source.variant ? ` · ${source.variant}` : ''}</small></div>{source.tutorialAvailable&&<button className="help-source-link" onClick={()=>setOpenSource(openSource===source.id?null:source.id)}>Tutoriel</button>}</div>;
+            return <div key={source.id}><FileSpreadsheet size={19}/><div><b>{source.id} — {source.label}</b><small>{source.format}{source.variant ? ` · ${source.variant}` : ''}</small></div>{source.tutorialAvailable&&<button className="help-source-link" onClick={()=>setOpenSource(openSource===source.id?null:source.id)}><BookOpen size={15}/>{openSource===source.id?'Masquer':'Voir le tutoriel'}</button>}</div>;
           }
           return <div key={`${entry.name}-${index}`}><FileSpreadsheet size={19}/><div><b>{entry.name}</b><small>{entry.format}</small></div>{entry.note&&<em>{entry.note}</em>}</div>;
         })}</div></section>
