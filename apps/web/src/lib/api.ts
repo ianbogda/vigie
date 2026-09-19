@@ -9,5 +9,5 @@ export const api = {
   dashboard: () => fetch('/api/dashboard').then(json<Dashboard>),
   pcifStatus: () => fetch('/api/integrations/pcif/status').then(json<any>),
   syncPcif: (uais: string[]) => fetch('/api/integrations/pcif/sync', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({uais}) }).then(json<any>),
-  importOpale: (form: FormData) => fetch('/api/import/opale', { method: 'POST', body: form }).then(json<any>),
+  importOpale: (form: FormData, ets?: string) => fetch(`/api/import/opale${ets?`?ets=${encodeURIComponent(ets)}`:''}`, { method: 'POST', body: form }).then(json<any>),
 };
