@@ -301,31 +301,63 @@ function parseFdr(buf: Buffer) {
 
 const cellText=(v:any)=>{if(v==null)return '';if(typeof v==='object'){if('text' in v)return String(v.text??'');if(Array.isArray(v.richText))return v.richText.map((x:any)=>x.text||'').join('');if('result' in v)return String(v.result??'')}return String(v).trim()};
 const cellNum=(v:any)=>{if(v==null||v==='')return 0;if(typeof v==='number')return Number.isFinite(v)?v:0;const n=Number(String(v).replace(/\s/g,'').replace(',','.'));return Number.isFinite(n)?n:0};
-async function xlsxData(buf: Buffer) {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buf as any);
-
-  const ws = wb.getWorksheet('Donnees');
-  if (!ws) throw new Error('Onglet Donnees absent.');
-
-  const rows: any[][] = [];
-
-  ws.eachRow({ includeEmpty: false }, row => {
-    const values = Array.isArray(row.values)
-      ? row.values.slice(1)
-      : Object.values(row.values);
-
-    rows.push(values as any[]);
+const normHeader=(v:any)=>cellText(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
+async function xlsxData(buf:Buffer){
+  const wb=new ExcelJS.Workbook();await wb.xlsx.load(buf as any);
+  const ws=wb.getWorksheet('Donnees');if(!ws)throw new Error('Onglet Donnees absent.');
+  const rows:any[][]=[];
+  ws.eachRow({includeEmpty:false},row=>{
+    const values=row.values;
+    rows.push(Array.isArray(values)?values.slice(1):Object.values(values??{}));
   });
-
   return rows;
 }
-function headerIndex(headers:any[],name:string){return headers.findIndex(x=>cellText(x).trim()===name)}
-async function detectFinancialXlsx(buf:Buffer){const rows=await xlsxData(buf);for(let i=0;i<Math.min(6,rows.length);i++){const h=rows[i].map(cellText);if(h.includes('Solde débit')&&h.includes('Solde crédit')&&h.includes('Montant débit antérieur'))return 'EBLC';if(h.includes('Montant colonne 1')&&h.includes('CGR de niveau 1')){const first=rows[i+1]||[];const dir=cellText(first[31]);return dir==='DEP'?'YCONSDEP':dir==='REC'?'YCONSREC':null}if(h.includes('Montant en référence colonne 15')&&h.includes('Pièce')){const first=rows[i+1]||[];const account=cellText(first[3]);return /^40/.test(account)?'YBALAF':'YBALAC'}}return null}
-async function parseFinancialXlsx(buf:Buffer,type:string,contextEntity:string){const rows=await xlsxData(buf);const hi=rows.findIndex(r=>{const h=r.map(cellText);return type==='EBLC'?h.includes('Solde débit')&&h.includes('Compte'):type.startsWith('YCONS')?h.includes('CGR de niveau 1')&&h.includes('Montant colonne 1'):h.includes('Montant en référence colonne 15')&&h.includes('Pièce')});if(hi<0)throw new Error(`${type}: en-têtes non reconnus.`);const h=rows[hi].map(cellText),data=rows.slice(hi+1).filter(r=>cellText(r[0]));const entity=cellText(data[0]?.[type==='EBLC'?15:0])||contextEntity;const uai=cellText(data[0]?.[type==='EBLC'?29:77]);const dateText=cellText(data[0]?.[type==='EBLC'?34:type.startsWith('YCONS')?80:72]);const snapshotDate=parseFrDate(dateText)||new Date().toISOString().slice(0,10);const exercise=type==='EBLC'?Number(cellText(data[0]?.[30]).slice(-4))||new Date(snapshotDate).getFullYear():new Date(snapshotDate).getFullYear();const period=type==='EBLC'?cellText(data[0]?.[36]):null;
- if(type==='EBLC')return {type,entity,uai,snapshotDate,exercise,period,rows:data.map((r,i)=>({line:i+hi+2,account:cellText(r[0]),label:cellText(r[1]),priorDebit:cellNum(r[4]),priorCredit:cellNum(r[5]),periodDebit:cellNum(r[6]),periodCredit:cellNum(r[7]),debit:cellNum(r[8]),credit:cellNum(r[9])})).filter(x=>/^\d{3,}/.test(x.account))};
- if(type.startsWith('YCONS'))return {type,entity,uai,snapshotDate,exercise,period:null,rows:data.map((r,i)=>({line:i+hi+2,direction:type==='YCONSDEP'?'DEP':'REC',section:cellText(r[4]),serviceGroup:cellText(r[7]),service:cellText(r[10]),domain:cellText(r[13]),activity:cellText(r[16]),account:cellText(r[62]),label:cellText(r[38])||cellText(r[63]),budget:cellNum(r[64]),committed:cellNum(r[65]),accounted:cellNum(r[66]),inProgress:cellNum(r[67]),available:cellNum(r[68])})).filter(x=>x.service||x.account)};
- return {type,entity,uai,snapshotDate,exercise,period:null,rows:data.map((r,i)=>({line:i+hi+2,account:cellText(r[3]),accountLabel:cellText(r[4]),partyId:cellText(r[22]),partyLabel:cellText(r[23]),piece:cellText(r[18]),pieceType:cellText(r[20]),amounts:Array.from({length:15},(_,j)=>cellNum(r[24+j]))})).filter(x=>x.account||x.piece)};
+function headerIndex(headers:any[],name:string){const wanted=normHeader(name);return headers.findIndex(x=>normHeader(x)===wanted)}
+function findHeaderRow(rows:any[][],required:string[]){return rows.findIndex(r=>required.every(name=>headerIndex(r,name)>=0))}
+async function detectFinancialXlsx(buf:Buffer){
+  const rows=await xlsxData(buf);
+  if(findHeaderRow(rows,['Compte','Solde débit','Solde crédit','Montant débit antérieur'])>=0)return 'EBLC';
+  const cons=findHeaderRow(rows,['Etablissement','CGR de niveau 1','Poste de niveau 1','Montant colonne 1']);
+  if(cons>=0){
+    const h=rows[cons],poste=headerIndex(h,'Poste de niveau 1');
+    const first=rows.slice(cons+1).find(r=>cellText(r[poste]));
+    const dir=cellText(first?.[poste]).toUpperCase();
+    if(dir==='DEP')return 'YCONSDEP';if(dir==='REC')return 'YCONSREC';
+  }
+  const aged=findHeaderRow(rows,['Etablissement','Pièce','Tiers','Montant en référence colonne 15']);
+  if(aged>=0){
+    const h=rows[aged],accountCol=headerIndex(h,'Critère de rupture 2');
+    const first=rows.slice(aged+1).find(r=>cellText(r[accountCol]));
+    const account=cellText(first?.[accountCol]);
+    if(/^40/.test(account))return 'YBALAF';
+    if(/^4[1-9]/.test(account))return 'YBALAC';
+    throw new Error(`Balance âgée reconnue, mais le compte ${account||'non renseigné'} ne permet pas de déterminer clients/fournisseurs.`);
+  }
+  return null;
+}
+async function parseFinancialXlsx(buf:Buffer,type:string,contextEntity:string){
+  const rows=await xlsxData(buf);
+  const required=type==='EBLC'?['Compte','Solde débit','Solde crédit']:type.startsWith('YCONS')?['Etablissement','CGR de niveau 1','Poste de niveau 1','Montant colonne 1']:['Etablissement','Pièce','Tiers','Montant en référence colonne 15'];
+  const hi=findHeaderRow(rows,required);if(hi<0)throw new Error(`${type}: en-têtes non reconnus.`);
+  const h=rows[hi];const idx=(name:string)=>headerIndex(h,name);const data=rows.slice(hi+1).filter(r=>r.some(v=>cellText(v)));
+  if(!data.length)throw new Error(`${type}: aucune ligne exploitable.`);
+  const first=data[0];
+  if(type==='EBLC'){
+    const entity=cellText(first[idx('Etablissement')])||contextEntity;
+    const dateText=cellText(first[idx('Date')]);const snapshotDate=parseFrDate(dateText)||new Date().toISOString().slice(0,10);
+    const exerciseText=cellText(first[idx("Fin d'exercice")])||cellText(first[idx("Début d'exercice")]);const exercise=Number((exerciseText.match(/20\d{2}/)||[])[0])||new Date(snapshotDate).getFullYear();
+    const period=cellText(first[idx('Période de fin')])||cellText(first[idx('Période de début')])||null;
+    return {type,entity,uai:'',snapshotDate,exercise,period,rows:data.map((r,i)=>({line:i+hi+2,account:cellText(r[idx('Compte')]),label:cellText(r[idx('Intitulé réduit du compte')]),priorDebit:cellNum(r[idx('Montant débit antérieur')]),priorCredit:cellNum(r[idx('Montant crédit antérieur')]),periodDebit:cellNum(r[idx('Montant débit')]),periodCredit:cellNum(r[idx('Montant crédit')]),debit:cellNum(r[idx('Solde débit')]),credit:cellNum(r[idx('Solde crédit')])})).filter(x=>/^\d{3,}/.test(x.account))};
+  }
+  if(type.startsWith('YCONS')){
+    const entity=cellText(first[idx('Etablissement si un seul sélectionné')])||cellText(first[idx('Etablissement')])||contextEntity;
+    const uai=cellText(first[idx('Intitulé réduit')]);const dateText=cellText(first[idx('Date')]);const snapshotDate=parseFrDate(dateText)||new Date().toISOString().slice(0,10);const exercise=new Date(snapshotDate).getFullYear();
+    const account=idx('Compte'), amount=idx('Montant colonne 1');
+    return {type,entity,uai,snapshotDate,exercise,period:null,rows:data.map((r,i)=>({line:i+hi+2,direction:type==='YCONSDEP'?'DEP':'REC',section:cellText(r[4]),serviceGroup:cellText(r[7]),service:cellText(r[10]),domain:cellText(r[13]),activity:cellText(r[16]),account:cellText(r[account]),label:cellText(r[account+1]),budget:cellNum(r[amount]),committed:cellNum(r[amount+1]),accounted:cellNum(r[amount+2]),inProgress:cellNum(r[amount+3]),available:cellNum(r[amount+4])})).filter(x=>x.service||x.account)};
+  }
+  const entity=cellText(first[idx('Etablissement')])||contextEntity;const uai=cellText(first[idx('Libellé réduit établissement')]);const dateText=cellText(first[idx('Date')]);const snapshotDate=parseFrDate(dateText)||new Date().toISOString().slice(0,10);const exercise=new Date(snapshotDate).getFullYear();
+  const account=idx('Critère de rupture 2'), accountLabel=idx('Libellé critère de rupture 2'), party=idx('Tiers'), partyLabel=idx('Libellé réduit du tiers'), piece=idx('Pièce'), pieceType=idx('Type de pièce'), amount=idx('Montant en référence colonne 1');
+  return {type,entity,uai,snapshotDate,exercise,period:null,rows:data.map((r,i)=>({line:i+hi+2,account:cellText(r[account]),accountLabel:cellText(r[accountLabel]),partyId:cellText(r[party]),partyLabel:cellText(r[partyLabel]),piece:cellText(r[piece]),pieceType:cellText(r[pieceType]),amounts:Array.from({length:15},(_,j)=>cellNum(r[amount+j]))})).filter(x=>x.account||x.piece)};
 }
 
 function detectCsvType(buf: Buffer) {
