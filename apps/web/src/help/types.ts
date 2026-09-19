@@ -1,4 +1,4 @@
-export type OpaleSourceId = 'YBALAC' | 'YBALAF';
+export type OpaleSourceId = 'YBALAC' | 'YBALAF' | 'EBLC' | 'YFDR';
 
 export type OpaleGuideStep = {
   n: string;
