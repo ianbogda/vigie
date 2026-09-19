@@ -77,3 +77,10 @@ Le contrat attendu côté PCIF Académie est décrit dans `PCIF_ACADEMIE_TODO.md
 ## v0.0.27 — Budget par service
 
 Synthèse budgétaire miroir par service : AP, VE, ALO, PAYE, services spéciaux le cas échéant, puis OPC. Les recettes et dépenses sont séparées avant agrégation.
+
+
+### v0.0.36 — trajectoires financières
+- courbes annuelles FDR, trésorerie, résultat et BFR ;
+- résultat calculé par crédits nets − débits nets des classes 6 et 7 ;
+- exercices clos alimentés par les EBLC au 31/12 ; exercice courant affiché en atténué ;
+- YFDR : `D` est interprété comme une valeur définitive/consolidée.

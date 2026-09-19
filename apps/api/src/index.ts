@@ -14,7 +14,7 @@ const app = Fastify({ logger: true });
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_ROWS = 100_000;
 const MAX_SHEETS = 20;
-const VERSION = '0.0.35';
+const VERSION = '0.0.36';
 const PCIF_BASE_URL = String(process.env.PCIF_BASE_URL || '').replace(/\/$/, '');
 const PCIF_API_KEY = String(process.env.PCIF_API_KEY || '');
 const PCIF_CACHE_MINUTES = Math.max(1, Number(process.env.PCIF_CACHE_MINUTES || 10));
@@ -437,9 +437,18 @@ app.get('/api/financial/:ets',async(req:any,reply:any)=>{try{
  const execution=async(snap:any)=>{if(!snap)return null;const q=(await pool.query(`select coalesce(sum(budget),0) budget,coalesce(sum(committed),0) committed,coalesce(sum(accounted),0) accounted,coalesce(sum(in_progress),0) in_progress,coalesce(sum(available),0) available from financial_execution_lines where snapshot_id=$1`,[snap.id])).rows[0];return Object.fromEntries(Object.entries(q).map(([k,v])=>[k,Number(v||0)]))};
  const aged=async(snap:any)=>{if(!snap)return null;const q=(await pool.query(`select coalesce(sum(total),0) total,coalesce(sum(due),0) due,coalesce(sum(before_121),0) old,coalesce(sum(not_due),0) not_due from financial_aged_lines where snapshot_id=$1`,[snap.id])).rows[0];return {snapshotDate:snap.snapshot_date,sourceFilename:snap.source_filename,total:Number(q.total||0),due:Number(q.due||0),old:Number(q.old||0),notDue:Number(q.not_due||0)}};
  const [expenses,revenues,receivables,payables]=await Promise.all([execution(depSnap),execution(recSnap),aged(clientSnap),aged(supplierSnap)]);
- let balance:any=null;if(eblc){const q=(await pool.query(`select coalesce(sum(case when account like '12%' then credit-debit else 0 end),0) result,coalesce(sum(case when account like '4%' then debit-credit else 0 end),0) bfr from financial_balance_lines where snapshot_id=$1`,[eblc.id])).rows[0];balance={snapshotDate:eblc.snapshot_date,exercise:eblc.exercise,period:eblc.period,result:Number(q.result||0),bfr:Number(q.bfr||0)}}
+ let balance:any=null;if(eblc){const q=(await pool.query(`select coalesce(sum(case when account ~ '^[67]' then credit-debit else 0 end),0) result,coalesce(sum(case when account like '4%' then debit-credit else 0 end),0) bfr from financial_balance_lines where snapshot_id=$1`,[eblc.id])).rows[0];balance={snapshotDate:eblc.snapshot_date,exercise:eblc.exercise,period:eblc.period,result:Number(q.result||0),bfr:Number(q.bfr||0)}}
  const fdrSnap=(await pool.query(`select * from fdr_snapshots where establishment_name=$1 or establishment_name=$2 order by snapshot_date desc,created_at desc limit 1`,[establishment.name,entity])).rows[0];let fdr:any=null,fdrHistory:any[]=[];if(fdrSnap){fdrHistory=(await pool.query('select exercise,amount,is_final from fdr_lines where snapshot_id=$1 order by exercise',[fdrSnap.id])).rows.map((x:any)=>({...x,amount:Number(x.amount)}));const x=fdrHistory.at(-1);if(x)fdr={...x}}
- return {establishment:{id:establishment.id,name:establishment.name,uai:establishment.uai,opaleEntity:entity},sources:{EBLC:eblc?.snapshot_date||null,YCONSDEP:depSnap?.snapshot_date||null,YCONSREC:recSnap?.snapshot_date||null,YBALAC:clientSnap?.snapshot_date||null,YBALAF:supplierSnap?.snapshot_date||null},expenses,revenues,receivables,payables,balance,fdr,fdrHistory,srh:null};
+ // Historique annuel : clôtures EBLC au 31/12 pour les exercices clos ; dernière EBLC disponible pour l'exercice courant.
+ // Résultat = crédits nets - débits nets des classes 6 et 7. Trésorerie = solde débiteur net du 5151. BFR = FDR - trésorerie.
+ const currentYear=new Date().getFullYear();
+ const eblcAnnual=(await pool.query(`select distinct on (exercise) id,exercise,snapshot_date,period from financial_snapshots where upper(opale_entity)=upper($1) and source_type='EBLC' and (exercise=$2 or snapshot_date=make_date(exercise,12,31)) order by exercise,snapshot_date desc,created_at desc`,[entity,currentYear])).rows;
+ const fdrByYear=new Map(fdrHistory.map((x:any)=>[Number(x.exercise),x]));const indicatorHistory:any[]=[];
+ for(const snap of eblcAnnual){const q=(await pool.query(`select coalesce(sum(case when account ~ '^[67]' then credit-debit else 0 end),0) result,coalesce(sum(case when account='5151' or account like '5151%' then debit-credit else 0 end),0) treasury from financial_balance_lines where snapshot_id=$1`,[snap.id])).rows[0];const year=Number(snap.exercise),f=fdrByYear.get(year),treasury=Number(q.treasury||0),result=Number(q.result||0),fdrAmount=f?Number(f.amount):null;indicatorHistory.push({exercise:year,snapshotDate:snap.snapshot_date,isCurrent:year===currentYear,isFinal:year<currentYear&&String(snap.snapshot_date).slice(5,10)==='12-31',fdr:fdrAmount,fdrFinal:f?!!f.is_final:false,treasury,result,bfr:fdrAmount==null?null:fdrAmount-treasury})}
+ // YFDR peut contenir des exercices pour lesquels aucune EBLC de clôture n'est encore importée : on conserve au moins la courbe FDR.
+ for(const x of fdrHistory){const year=Number(x.exercise);if(!indicatorHistory.some((r:any)=>r.exercise===year))indicatorHistory.push({exercise:year,snapshotDate:null,isCurrent:year===currentYear,isFinal:!!x.is_final,fdr:Number(x.amount),fdrFinal:!!x.is_final,treasury:null,result:null,bfr:null})}
+ indicatorHistory.sort((a:any,b:any)=>a.exercise-b.exercise);
+ return {establishment:{id:establishment.id,name:establishment.name,uai:establishment.uai,opaleEntity:entity},sources:{EBLC:eblc?.snapshot_date||null,YCONSDEP:depSnap?.snapshot_date||null,YCONSREC:recSnap?.snapshot_date||null,YBALAC:clientSnap?.snapshot_date||null,YBALAF:supplierSnap?.snapshot_date||null},expenses,revenues,receivables,payables,balance,fdr,fdrHistory,indicatorHistory,srh:null};
 }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Analyse financière impossible'})}});
 
 app.get('/api/aged/:ets/:kind',async(req:any,reply:any)=>{try{
