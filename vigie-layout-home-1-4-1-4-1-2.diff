@@ -1,0 +1,66 @@
+--- a/apps/web/src/views/HomeView.tsx
++++ b/apps/web/src/views/HomeView.tsx
+@@ -1,3 +1,5 @@
++      </section>
++      <section className="lower-grid">
+         <article className="panel priorities">
+           <div className="panel-title">
+             <div>
+@@ -7,7 +9,7 @@
+               <p>{signals.length} signal(s) sur le périmètre.</p>
+             </div>
+           </div>
+-          {signals.slice(0, 6).map((s, i) => {
++          {signals.slice(0, 3).map((s, i) => {
+             const key = `${s.code}-${i}`;
+             return (
+               <SignalCard
+@@ -19,8 +21,6 @@
+             );
+           })}
+         </article>
+-      </section>
+-      <section className="lower-grid">
+         <ManagementMarker current={current} signals={signals} engagementRate={m?.engagementRate} />
+         <PcifCard current={current} onSync={onPcifSync} syncing={pcifSyncing} />
+       </section>
+--- a/apps/web/src/style.css
++++ b/apps/web/src/style.css
+@@ -1,6 +1,36 @@
+ .lower-grid {
+   display: grid;
+-  grid-template-columns: 1.8fr 0.8fr;
++  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+   gap: 10px;
+   margin-top: 10px;
++  align-items: stretch;
+ }
++.lower-grid > .panel {
++  min-width: 0;
++}
++.lower-grid .management-marker-title {
++  display: block;
++}
++.lower-grid .management-marker-title > small {
++  display: block;
++  margin-top: 6px;
++}
++.lower-grid .management-marker-grid {
++  grid-template-columns: 1fr;
++}
++@media (max-width: 1200px) {
++  .lower-grid {
++    grid-template-columns: 1fr 1fr;
++  }
++  .lower-grid > :last-child {
++    grid-column: 1 / -1;
++  }
++}
++@media (max-width: 760px) {
++  .lower-grid {
++    grid-template-columns: 1fr;
++  }
++  .lower-grid > :last-child {
++    grid-column: auto;
++  }
++}
