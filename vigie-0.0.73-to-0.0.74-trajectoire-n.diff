@@ -1,0 +1,63 @@
+--- a/apps/api/src/modules/dashboard.routes.ts
++++ b/apps/api/src/modules/dashboard.routes.ts
+@@ -6,4 +6,30 @@
+             list.push({ date: point.date, month: date.getMonth() + 1, value: point.actualRec - point.actualDep });
+             byYear.set(year, list);
+           }
++
++          // L'historique améliore la lecture mais ne conditionne pas le graphique.
++          // Avec une seule situation N, le réalisé courant fournit le point constaté.
++          const currentActual = byYear.get(snapshotYear) || [];
++          if (currentActual.length === 0) {
++            const snapshotDate = String(e.sources.budget.snapshot_date).slice(0, 10);
++            const snapshot = new Date(`${snapshotDate}T12:00:00`);
++            byYear.set(snapshotYear, [
++              {
++                date: snapshotDate,
++                month: snapshot.getMonth() + 1,
++                value: revenues.accounted - expenses.accounted
++              }
++            ]);
++          }
++
++          // Si plusieurs situations existent dans un mois, conserver la plus récente.
++          for (const [year, points] of byYear) {
++            const latestByMonth = new Map<number, { date: string; month: number; value: number }>();
++            for (const point of points) {
++              const previousPoint = latestByMonth.get(point.month);
++              if (!previousPoint || point.date > previousPoint.date) latestByMonth.set(point.month, point);
++            }
++            byYear.set(year, [...latestByMonth.values()].sort((a, b) => a.month - b.month));
++          }
++
+           const latestBudgetResult = revenues.budget - expenses.budget;
+--- a/apps/web/src/components/FinancialTrajectoryChart.tsx
++++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
+@@ -1,3 +1,7 @@
+-  if (!trajectory?.actual?.length) {
+-    return <div className="financial-trajectory-empty">Données historisées insuffisantes pour tracer la trajectoire financière.</div>;
++  if (!trajectory) {
++    return <div className="financial-trajectory-empty">Données de l'exercice insuffisantes pour tracer la trajectoire financière.</div>;
+   }
++
++  if (!trajectory.actual.length) {
++    return <div className="financial-trajectory-empty">Aucun réalisé disponible pour l'exercice courant.</div>;
++  }
+--- a/package.json
++++ b/package.json
+@@ -1,2 +1,2 @@
+   "name": "vigie-eple",
+-  "version": "0.0.73",
++  "version": "0.0.74",
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -1,2 +1,2 @@
+   "name": "@vigie/api",
+-  "version": "0.0.73",
++  "version": "0.0.74",
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -1,2 +1,2 @@
+   "name": "@vigie/web",
+-  "version": "0.0.73",
++  "version": "0.0.74",
