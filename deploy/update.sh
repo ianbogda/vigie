@@ -31,15 +31,19 @@ fail() {
 
 recover() {
   local code=$?
+  local line="${BASH_LINENO[0]:-?}"
+  local command="${BASH_COMMAND:-inconnue}"
 
-  printf '\n\033[1;31mÉchec de la mise à jour de Vigie.\033[0m\n' >&2
+  printf '\n\033[1;31mÉchec du script ligne %s (code %s).\033[0m\n' \
+    "$line" "$code" >&2
+  printf 'Commande : %s\n' "$command" >&2
 
   if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
     warn "Staging conservé pour diagnostic : $STAGING_DIR"
   fi
 
   if (( SERVICE_STOPPED )); then
-    warn "Tentative de redémarrage de la version présente dans $APP_DIR..."
+    warn "Tentative de redémarrage de Vigie..."
     systemctl start vigie >/dev/null 2>&1 || true
   fi
 
