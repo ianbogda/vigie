@@ -172,21 +172,76 @@ STAGING_VERSION="$(node -p "require('$STAGING_DIR/package.json').version")"
 ok "Sources v${EXPECTED_VERSION} copiées dans le staging."
 
 # ---------------------------------------------------------------------------
+# Staging éphémère
+# ---------------------------------------------------------------------------
+
+log "Préparation du staging"
+echo "Source  : $SOURCE_DIR"
+echo "Staging : $STAGING_DIR"
+
+# Le staging doit être construit uniquement à partir des sources.
+# Les artefacts produits localement dans le checkout ne doivent jamais
+# être propagés : ils peuvent appartenir à root ou être obsolètes.
+rsync -a \
+  --delete \
+  --chown="$APP_USER:$APP_USER" \
+  --exclude='.git/' \
+  --exclude='.env' \
+  --exclude='node_modules/' \
+  --exclude='dist/' \
+  --exclude='*.tsbuildinfo' \
+  "$SOURCE_DIR/" "$STAGING_DIR/"
+
+STAGING_VERSION="$(
+  node -p "require('$STAGING_DIR/package.json').version"
+)"
+
+[[ "$STAGING_VERSION" == "$EXPECTED_VERSION" ]] \
+  || fail "Version du staging inattendue : $STAGING_VERSION au lieu de $EXPECTED_VERSION."
+
+# Vérification des droits avant npm.
+[[ "$(stat -c '%U' "$STAGING_DIR")" == "$APP_USER" ]] \
+  || fail "Le staging $STAGING_DIR n'appartient pas à $APP_USER."
+
+sudo -u "$APP_USER" test -w "$STAGING_DIR" \
+  || fail "Le staging $STAGING_DIR n'est pas inscriptible par $APP_USER."
+
+ok "Sources v${EXPECTED_VERSION} copiées dans le staging."
+
+# ---------------------------------------------------------------------------
 # Quality gate + build
 # ---------------------------------------------------------------------------
 
-log "Installation des dépendances dans le staging"
+log "Installation, quality gate et build dans le staging"
 
-cd "$STAGING_DIR"
-sudo -u "$APP_USER" npm ci
+sudo -u "$APP_USER" -- bash -c '
+  set -Eeuo pipefail
 
-log "Quality gate"
+  staging_dir="$1"
+  cd "$staging_dir"
 
-sudo -u "$APP_USER" npm run quality
+  echo "Workspace npm : $(pwd)"
+  echo "Utilisateur    : $(id -un)"
 
-log "Build"
+  if [[ "$(pwd -P)" != "$(realpath "$staging_dir")" ]]; then
+    echo "ERREUR: workspace npm inattendu." >&2
+    exit 1
+  fi
 
-sudo -u "$APP_USER" npm run build
+  echo
+  echo "==> npm ci"
+  npm ci
+
+  # npm/tsc peuvent générer des .tsbuildinfo.
+  # Ils seront ici créés par APP_USER, jamais par root.
+  echo
+  echo "==> npm run quality"
+  npm run quality
+
+  echo
+  echo "==> npm run build"
+  npm run build
+' _ "$STAGING_DIR"
 
 log "Contrôle des artefacts construits"
 
@@ -264,9 +319,10 @@ log "Déploiement de Vigie v${EXPECTED_VERSION}"
 rsync -a \
   --delete \
   --chown="$APP_USER:$APP_USER" \
-  --exclude node_modules \
-  --exclude .git \
-  --exclude '.env' \
+  --exclude='node_modules/' \
+  --exclude='.git/' \
+  --exclude='.env' \
+  --exclude='*.tsbuildinfo' \
   "$STAGING_DIR/" "$APP_DIR/"
 
 # Contrôle IMMÉDIAT après rsync, avant toute autre opération.
