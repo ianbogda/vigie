@@ -309,43 +309,61 @@ export function registerDashboardRoutes(app: FastifyInstance, dependencies: Depe
             return { low: Math.max(known, central - uncertainty), central, high: central + uncertainty };
           };
           const dep = projected(expenses, 0.18), rec = projected(revenues, 0.22);
-          const currentResult = revenues.accounted - expenses.accounted;
-          const budgetResult = revenues.budget - expenses.budget;
-          const trajectorySnapshots = (
-            await pool.query(
-              `select id,snapshot_date from budget_snapshots
-               where coalesce(nullif(opale_entity,''),establishment_name)=$1
-                 and extract(year from snapshot_date)=extract(year from $2::date)
-               order by snapshot_date asc,created_at asc`,
-              [e.sources.budget.source_key, e.sources.budget.snapshot_date]
-            )
-          ).rows;
-          const trajectoryPoints: { date: string; result: number }[] = [];
-          for (const snapshot of trajectorySnapshots) {
-            const rows = (
-              await pool.query(`select raw_dimensions,accounted from budget_lines where snapshot_id=$1`, [snapshot.id])
-            ).rows;
-            const amount = (direction: string) =>
-              rows
-                .filter((row: any) => side(row) === direction)
-                .reduce((sum: number, row: any) => sum + Math.abs(Number(row.accounted || 0)), 0);
-            trajectoryPoints.push({
-              date: String(snapshot.snapshot_date),
-              result: amount('REC') - amount('DEP')
-            });
-          }
           e.resultForecast = {
             low: rec.low - dep.high,
             central: rec.central - dep.central,
             high: rec.high - dep.low,
-            current: currentResult,
-            budget: budgetResult,
-            snapshotDate: String(e.sources.budget.snapshot_date),
-            points: trajectoryPoints,
-            projectedRevenues: rec,
-            projectedExpenses: dep,
             method: 'Réalisé + engagé + extrapolation de la trajectoire à date',
             confidence: target >= 0.65 ? 'medium' : 'low'
+          };
+
+          // Courbe d'accueil : résultat réalisé cumulé observé dans chaque situation
+          // budgétaire historisée, comparé aux exercices précédents et à la référence
+          // budgétaire. Les scénarios d'atterrissage prolongent uniquement le dernier
+          // constat jusqu'au 31/12 ; aucun point mensuel fictif n'est créé.
+          const snapshotYear = new Date(`${e.sources.budget.snapshot_date}T12:00:00`).getFullYear();
+          const historyRows = (
+            await pool.query(
+              `select bs.id,bs.snapshot_date,bl.raw_dimensions,bl.budget,bl.accounted
+               from budget_snapshots bs
+               join budget_lines bl on bl.snapshot_id=bs.id
+               where coalesce(nullif(bs.opale_entity,''),bs.establishment_name)=$1
+                 and extract(year from bs.snapshot_date) between $2 and $3
+               order by bs.snapshot_date,bs.id`,
+              [e.sources.budget.source_key, snapshotYear - 2, snapshotYear]
+            )
+          ).rows;
+          const snapshots = new Map<string, { date: string; budgetDep: number; budgetRec: number; actualDep: number; actualRec: number }>();
+          for (const row of historyRows) {
+            const key = `${row.id}:${row.snapshot_date}`;
+            const point = snapshots.get(key) || { date: String(row.snapshot_date).slice(0, 10), budgetDep: 0, budgetRec: 0, actualDep: 0, actualRec: 0 };
+            const direction = side(row);
+            if (direction === 'DEP') { point.budgetDep += Math.abs(Number(row.budget || 0)); point.actualDep += Math.abs(Number(row.accounted || 0)); }
+            if (direction === 'REC') { point.budgetRec += Math.abs(Number(row.budget || 0)); point.actualRec += Math.abs(Number(row.accounted || 0)); }
+            snapshots.set(key, point);
+          }
+          const byYear = new Map<number, Array<{ date: string; month: number; value: number }>>();
+          for (const point of snapshots.values()) {
+            const date = new Date(`${point.date}T12:00:00`);
+            const year = date.getFullYear();
+            const list = byYear.get(year) || [];
+            list.push({ date: point.date, month: date.getMonth() + 1, value: point.actualRec - point.actualDep });
+            byYear.set(year, list);
+          }
+          const latestBudgetResult = revenues.budget - expenses.budget;
+          const budgetReference = Array.from({ length: 12 }, (_, index) => {
+            const month = index + 1;
+            const date = `${snapshotYear}-${String(month).padStart(2, '0')}-${String(new Date(snapshotYear, month, 0).getDate()).padStart(2, '0')}`;
+            return { date, month, value: latestBudgetResult * budgetTrajectoryTarget(date) };
+          });
+          e.financialTrajectory = {
+            exercise: snapshotYear,
+            snapshotDate: String(e.sources.budget.snapshot_date).slice(0, 10),
+            actual: byYear.get(snapshotYear) || [],
+            previous: Object.fromEntries([snapshotYear - 2, snapshotYear - 1].map((year) => [String(year), byYear.get(year) || []])),
+            budgetReference,
+            forecast: { low: e.resultForecast.low, central: e.resultForecast.central, high: e.resultForecast.high },
+            annualBudgetResult: latestBudgetResult
           };
         }
         states.budget = severity(e.signals.filter((x: any) => x.domain === 'Budget'));
@@ -480,7 +498,8 @@ export function registerDashboardRoutes(app: FastifyInstance, dependencies: Depe
         budgetMetrics: e.budgetMetrics || null,
         fdrHistory: e.fdrHistory || [],
         treasury: e.treasury || null,
-        resultForecast: e.resultForecast || null
+        resultForecast: e.resultForecast || null,
+        financialTrajectory: e.financialTrajectory || null
       });
     }
     try {

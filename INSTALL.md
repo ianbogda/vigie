@@ -1,4 +1,4 @@
-# Installation et mise à jour — Vigie v0.0.72
+# Installation et mise à jour — Vigie v0.0.73
 
 ## Première installation — Debian 13
 

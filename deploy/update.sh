@@ -71,6 +71,25 @@ check_dist() {
   ok "$label : artefacts API et Web présents."
 }
 
+check_build_version() {
+  local root="$1"
+  local label="$2"
+  local expected="$3"
+  local package_version api_package_version web_package_version web_version
+
+  package_version="$(node -p "require('$root/package.json').version")"
+  api_package_version="$(node -p "require('$root/apps/api/package.json').version")"
+  web_package_version="$(node -p "require('$root/apps/web/package.json').version")"
+  [[ "$package_version" == "$expected" && "$api_package_version" == "$expected" && "$web_package_version" == "$expected" ]] \
+    || fail "$label : versions source incohérentes (root=$package_version, API=$api_package_version, Web=$web_package_version, attendu=$expected)."
+
+  web_version="$(sed -n 's/.*<meta name="vigie-version" content="\([^"]*\)".*/\1/p' "$root/apps/web/dist/index.html" | head -n1)"
+  [[ "$web_version" == "$expected" ]] \
+    || fail "$label : build Web=$web_version, attendu=$expected. Le dist ne correspond pas aux sources."
+
+  ok "$label : source/API/Web cohérents en v${expected}."
+}
+
 # ---------------------------------------------------------------------------
 # Précontrôles
 # ---------------------------------------------------------------------------
@@ -132,10 +151,9 @@ STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
 log "Préparation du staging"
 echo "Staging : $STAGING_DIR"
 
-chown "$APP_USER:$APP_USER" "$STAGING_DIR"
-
-sudo -u "$APP_USER" rsync -a \
+rsync -a \
   --delete \
+  --chown="$APP_USER:$APP_USER" \
   --exclude node_modules \
   --exclude .git \
   --exclude '.env' \
@@ -168,6 +186,7 @@ sudo -u "$APP_USER" npm run build
 log "Contrôle des artefacts construits"
 
 check_dist "$STAGING_DIR" "Staging"
+check_build_version "$STAGING_DIR" "Staging" "$EXPECTED_VERSION"
 
 echo "API :"
 du -sh "$STAGING_DIR/apps/api/dist"
@@ -247,6 +266,7 @@ rsync -a \
 
 # Contrôle IMMÉDIAT après rsync, avant toute autre opération.
 check_dist "$APP_DIR" "Production après rsync"
+check_build_version "$APP_DIR" "Production après rsync" "$EXPECTED_VERSION"
 
 DEPLOYED_VERSION="$(node -p "require('$APP_DIR/package.json').version")"
 
@@ -267,6 +287,7 @@ sudo -u "$APP_USER" npm ci --omit=dev
 
 # npm ci ne doit jamais faire disparaître les artefacts construits.
 check_dist "$APP_DIR" "Production après npm ci"
+check_build_version "$APP_DIR" "Production après npm ci" "$EXPECTED_VERSION"
 
 # ---------------------------------------------------------------------------
 # Migrations
@@ -348,6 +369,7 @@ done
 log "Contrôle final de la production"
 
 check_dist "$APP_DIR" "Production"
+check_build_version "$APP_DIR" "Production" "$EXPECTED_VERSION"
 
 [[ "$(node -p "require('$APP_DIR/package.json').version")" == "$EXPECTED_VERSION" ]] \
   || fail "La production n'est plus en version $EXPECTED_VERSION."

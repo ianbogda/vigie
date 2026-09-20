@@ -96,20 +96,16 @@ export type TreasuryContext = {
   series?: TreasurySeries[];
   warning?: string;
 };
-export type ForecastRange = { low: number; central: number; high: number };
-export type ForecastPoint = { date: string; result: number };
-export type Forecast = {
-  low: number;
-  central: number;
-  high: number;
-  current?: number;
-  budget?: number;
-  snapshotDate?: string;
-  points?: ForecastPoint[];
-  projectedRevenues?: ForecastRange;
-  projectedExpenses?: ForecastRange;
-  method: string;
-  confidence: 'low' | 'medium' | 'high';
+export type Forecast = { low: number; central: number; high: number; method: string; confidence: 'low' | 'medium' | 'high' };
+export type FinancialTrajectoryPoint = { date: string; month: number; value: number };
+export type FinancialTrajectory = {
+  exercise: number;
+  snapshotDate: string;
+  actual: FinancialTrajectoryPoint[];
+  previous: Record<string, FinancialTrajectoryPoint[]>;
+  budgetReference: FinancialTrajectoryPoint[];
+  forecast: { low: number; central: number; high: number };
+  annualBudgetResult: number;
 };
 export type Eple = {
   id: string;
@@ -128,6 +124,7 @@ export type Eple = {
   pcif?: PcifContext;
   treasury?: TreasuryContext;
   resultForecast?: Forecast;
+  financialTrajectory?: FinancialTrajectory;
 };
 export type Dashboard = {
   generatedAt?: string;

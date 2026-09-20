@@ -1,8 +1,8 @@
-# Vigie EPLE — v0.0.72 — cockpit multi-établissements
+# Vigie EPLE — v0.0.73 — cockpit multi-établissements
 
 Vigie devient un cockpit financier et comptable multi-EPLE : observer, analyser et anticiper à partir des situations Op@le historisées.
 
-## v0.0.72 — préparation production
+## v0.0.73 — préparation production
 
 Cette version stabilise le déploiement sans réinitialiser les données : version API dérivée du package, configuration de production validée, CORS fermé par défaut en production, healthcheck PostgreSQL, sauvegarde `pg_dump` vérifiée, migrations suivies par `schema_migrations`, build et quality gate en staging avant arrêt du service, archive du code précédent et smoke tests après redémarrage.
 
@@ -13,6 +13,14 @@ sudo bash deploy/update.sh
 ```
 
 La procédure détaillée, la sauvegarde manuelle et la restauration d'urgence sont décrites dans `INSTALL.md`.
+
+### Accueil ETS — trajectoire financière
+
+La vue Accueil d’un établissement trace désormais le résultat cumulé réellement observé dans les situations budgétaires historisées, les exercices N-1/N-2 lorsqu’ils sont disponibles, la référence budgétaire et la fourchette d’atterrissage basse/centrale/haute au 31 décembre. Aucun point mensuel absent n’est inventé.
+
+### Cohérence de release
+
+Le numéro de version affiché par le Web est injecté au build depuis `apps/web/package.json`. Le build ajoute aussi une balise `meta[name=vigie-version]`. `deploy/update.sh` contrôle la cohérence des versions root/API/Web et de cette empreinte du build avant et après la bascule. Une ancienne `dist` ne peut donc plus être déclarée valide sous un numéro de release récent.
 
 ## Cette itération
 

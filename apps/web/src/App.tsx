@@ -165,7 +165,7 @@ export default function App() {
             <LogOut size={14} /> Déconnexion
           </button>
         </div>
-        <small className="version">VIGIE v0.0.58</small>
+        <small className="version">VIGIE v{__APP_VERSION__}</small>
       </aside>
       <main className="content">
         <header className="topbar">

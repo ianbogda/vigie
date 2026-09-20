@@ -13,7 +13,7 @@ import { eur, pct } from '../lib/format';
 import type { Dashboard, Eple } from '../types/dashboard';
 import { PcifCard } from '../components/PcifCard';
 import { SignalCard } from '../components/SignalCard';
-import { TrajectoryChart } from '../components/TrajectoryChart';
+import { FinancialTrajectoryChart } from '../components/FinancialTrajectoryChart';
 
 function Kpi({ icon, label, value, hint, delta }: any) {
   return (
@@ -179,15 +179,15 @@ export function HomeView({
         />
       </section>
       <section className="main-grid">
-        <article className="panel execution">
+        <article className="panel execution financial-trajectory-panel">
           <div className="panel-title">
             <div>
               <h3>Trajectoire financière</h3>
-              <p>Résultat cumulé constaté et projection d’atterrissage au 31 décembre.</p>
+              <p>Résultat cumulé constaté, historique et atterrissage projeté au 31 décembre.</p>
             </div>
             <span className="pill">Atterrissage</span>
           </div>
-          <TrajectoryChart forecast={forecast} />
+          <FinancialTrajectoryChart trajectory={current?.financialTrajectory} />
           {m ? (
             <div className="metric-row">
               <span>
