@@ -151,7 +151,7 @@ echo "Production         : $APP_DIR"
 # Staging éphémère
 # ---------------------------------------------------------------------------
 
-STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
+#STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
 
 log "Préparation du staging"
 echo "Staging : $STAGING_DIR"
@@ -164,7 +164,7 @@ rsync -a \
   --exclude '.env' \
   "$SOURCE_DIR/" "$STAGING_DIR/"
 
-#STAGING_VERSION="$(node -p "require('$STAGING_DIR/package.json').version")"
+STAGING_VERSION="$(node -p "require('$STAGING_DIR/package.json').version")"
 
 [[ "$STAGING_VERSION" == "$EXPECTED_VERSION" ]] \
   || fail "Version du staging inattendue : $STAGING_VERSION au lieu de $EXPECTED_VERSION."
