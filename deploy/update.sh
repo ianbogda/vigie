@@ -8,7 +8,12 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="/etc/vigie.env"
 BACKUP_DIR="/var/backups/vigie"
 
-STAGING_DIR=""
+STAGING_ROOT="/opt/vigie-staging"
+mkdir -p "$STAGING_ROOT"
+chown "$APP_USER:$APP_USER" "$STAGING_ROOT"
+chmod 750 "$STAGING_ROOT"
+
+STAGING_DIR="$(sudo -u "$APP_USER" mktemp -d "$STAGING_ROOT/vigie-deploy-XXXXXXXX")"
 SERVICE_STOPPED=0
 DEPLOY_STARTED=0
 
@@ -159,7 +164,7 @@ rsync -a \
   --exclude '.env' \
   "$SOURCE_DIR/" "$STAGING_DIR/"
 
-STAGING_VERSION="$(node -p "require('$STAGING_DIR/package.json').version")"
+#STAGING_VERSION="$(node -p "require('$STAGING_DIR/package.json').version")"
 
 [[ "$STAGING_VERSION" == "$EXPECTED_VERSION" ]] \
   || fail "Version du staging inattendue : $STAGING_VERSION au lieu de $EXPECTED_VERSION."
