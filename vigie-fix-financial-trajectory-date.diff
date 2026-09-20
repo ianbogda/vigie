@@ -1,0 +1,53 @@
+--- a/apps/api/src/modules/dashboard.routes.ts
++++ b/apps/api/src/modules/dashboard.routes.ts
+@@ -1 +1,12 @@
+-          const snapshotYear = new Date(`${e.sources.budget.snapshot_date}T12:00:00`).getFullYear();
++          const budgetSnapshotRaw = e.sources.budget.snapshot_date;
++          const budgetSnapshotDate =
++            budgetSnapshotRaw instanceof Date
++              ? budgetSnapshotRaw.toISOString().slice(0, 10)
++              : /^\d{4}-\d{2}-\d{2}/.test(String(budgetSnapshotRaw ?? ''))
++                ? String(budgetSnapshotRaw).slice(0, 10)
++                : (() => {
++                    const parsed = new Date(String(budgetSnapshotRaw ?? ''));
++                    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
++                  })();
++          if (!budgetSnapshotDate) throw new Error('Date de situation budgétaire invalide');
++          const snapshotYear = Number(budgetSnapshotDate.slice(0, 4));
+--- a/apps/api/src/modules/dashboard.routes.ts
++++ b/apps/api/src/modules/dashboard.routes.ts
+@@ -1 +1,8 @@
+-            const point = snapshots.get(key) || { date: String(row.snapshot_date).slice(0, 10), budgetDep: 0, budgetRec: 0, actualDep: 0, actualRec: 0 };
++            const rowDate =
++              row.snapshot_date instanceof Date
++                ? row.snapshot_date.toISOString().slice(0, 10)
++                : /^\d{4}-\d{2}-\d{2}/.test(String(row.snapshot_date ?? ''))
++                  ? String(row.snapshot_date).slice(0, 10)
++                  : null;
++            if (!rowDate) continue;
++            const point = snapshots.get(key) || { date: rowDate, budgetDep: 0, budgetRec: 0, actualDep: 0, actualRec: 0 };
+--- a/apps/api/src/modules/dashboard.routes.ts
++++ b/apps/api/src/modules/dashboard.routes.ts
+@@ -1 +1 @@
+-            snapshotDate: String(e.sources.budget.snapshot_date).slice(0, 10),
++            snapshotDate: budgetSnapshotDate,
+--- a/apps/web/src/components/FinancialTrajectoryChart.tsx
++++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
+@@ -2,0 +3,8 @@
++function formatSnapshotDate(value?: string | null) {
++  if (!value) return null;
++  const isoDate = value.slice(0, 10);
++  const date = new Date(`${isoDate}T12:00:00`);
++  if (Number.isNaN(date.getTime())) return null;
++  return new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit' }).format(date);
++}
++
+--- a/apps/web/src/components/FinancialTrajectoryChart.tsx
++++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
+@@ -1,0 +2 @@
++  const snapshotLabel = formatSnapshotDate(trajectory.snapshotDate);
+--- a/apps/web/src/components/FinancialTrajectoryChart.tsx
++++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
+@@ -1 +1 @@
+-        <text className="financial-today-label" x={projectionStartX + 6} y={top + 13}>Situation au {new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit' }).format(new Date(`${trajectory.snapshotDate}T12:00:00`))}</text>
++        <text className="financial-today-label" x={projectionStartX + 6} y={top + 13}>{snapshotLabel ? `Situation au ${snapshotLabel}` : 'Situation actuelle'}</text>
