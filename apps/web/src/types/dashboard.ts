@@ -85,6 +85,10 @@ export type TreasuryContext = {
   currentExercise?: number | null;
   openingBalance?: number | null;
   currentBalance?: number | null;
+  placementsBalance?: number | null;
+  placementsByAccount?: { account: string; label?: string; balance: number }[];
+  placementAccounts?: string[];
+  availableBalance?: number | null;
   currentMovement?: number | null;
   minBalance?: number | null;
   maxBalance?: number | null;
@@ -92,6 +96,7 @@ export type TreasuryContext = {
   series?: TreasurySeries[];
   warning?: string;
 };
+export type Forecast = { low: number; central: number; high: number; method: string; confidence: 'low' | 'medium' | 'high' };
 export type Eple = {
   id: string;
   registryId?: number | null;
@@ -108,6 +113,7 @@ export type Eple = {
   fdrHistory?: FdrEntry[];
   pcif?: PcifContext;
   treasury?: TreasuryContext;
+  resultForecast?: Forecast;
 };
 export type Dashboard = {
   generatedAt?: string;

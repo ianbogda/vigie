@@ -1,4 +1,4 @@
-# Installation et mise à jour — Vigie v0.0.70
+# Installation et mise à jour — Vigie v0.0.71
 
 ## Première installation — Debian 13
 
@@ -20,7 +20,7 @@ sudo bash deploy/update.sh
 
 Avant toute migration, le script :
 
-1. construit la nouvelle version dans `/opt/vigie-staging` ;
+1. crée un staging éphémère dans `/tmp`, y construit et valide la nouvelle version ;
 2. exécute `npm run quality` ;
 3. crée un dump PostgreSQL vérifié dans `/var/backups/vigie` ;
 4. archive le code actuellement déployé ;

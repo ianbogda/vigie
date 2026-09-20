@@ -1,8 +1,8 @@
-# Vigie EPLE — v0.0.70 — cockpit multi-établissements
+# Vigie EPLE — v0.0.71 — cockpit multi-établissements
 
 Vigie devient un cockpit financier et comptable multi-EPLE : observer, analyser et anticiper à partir des situations Op@le historisées.
 
-## v0.0.70 — préparation production
+## v0.0.71 — préparation production
 
 Cette version stabilise le déploiement sans réinitialiser les données : version API dérivée du package, configuration de production validée, CORS fermé par défaut en production, healthcheck PostgreSQL, sauvegarde `pg_dump` vérifiée, migrations suivies par `schema_migrations`, build et quality gate en staging avant arrêt du service, archive du code précédent et smoke tests après redémarrage.
 

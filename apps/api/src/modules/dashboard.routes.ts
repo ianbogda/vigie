@@ -285,6 +285,38 @@ export function registerDashboardRoutes(app: FastifyInstance, dependencies: Depe
         e.budgetMetrics.trajectoryTarget = budgetTrajectoryTarget(e.sources.budget.snapshot_date);
         const bs = budgetSignal(m, e.sources.budget.snapshot_date);
         if (bs) e.signals.push(bs);
+
+        // Atterrissage : le réalisé et l'engagé sont certains ; le reliquat est projeté
+        // autour de la trajectoire théorique. La fourchette évite une fausse précision.
+        const executionRows = (
+          await pool.query(`select raw_dimensions,budget,committed,accounted from budget_lines where snapshot_id=$1`, [e.sources.budget.id])
+        ).rows;
+        const side = (row: any) => {
+          const dimensions = typeof row.raw_dimensions === 'string' ? JSON.parse(row.raw_dimensions) : row.raw_dimensions;
+          return String((dimensions?.posts || []).find((post: any) => post.level === 2)?.code || '').trim().toUpperCase();
+        };
+        const sumSide = (direction: string, field: string) =>
+          executionRows.filter((row: any) => side(row) === direction).reduce((sum: number, row: any) => sum + Math.abs(Number(row[field] || 0)), 0);
+        const expenses = { budget: sumSide('DEP', 'budget'), committed: sumSide('DEP', 'committed'), accounted: sumSide('DEP', 'accounted') };
+        const revenues = { budget: sumSide('REC', 'budget'), committed: sumSide('REC', 'committed'), accounted: sumSide('REC', 'accounted') };
+        const target = Math.max(0.15, Math.min(0.98, e.budgetMetrics.trajectoryTarget || 0.75));
+        if (expenses.budget || revenues.budget) {
+          const projected = (x: typeof expenses, cautious: number) => {
+            const pace = x.accounted / target;
+            const known = Math.max(x.accounted, x.committed);
+            const central = Math.min(x.budget || Number.POSITIVE_INFINITY, Math.max(known, pace));
+            const uncertainty = Math.max(0, central - x.accounted) * cautious;
+            return { low: Math.max(known, central - uncertainty), central, high: central + uncertainty };
+          };
+          const dep = projected(expenses, 0.18), rec = projected(revenues, 0.22);
+          e.resultForecast = {
+            low: rec.low - dep.high,
+            central: rec.central - dep.central,
+            high: rec.high - dep.low,
+            method: 'Réalisé + engagé + extrapolation de la trajectoire à date',
+            confidence: target >= 0.65 ? 'medium' : 'low'
+          };
+        }
         states.budget = severity(e.signals.filter((x: any) => x.domain === 'Budget'));
       }
       if (e.sources.purchases) {
@@ -416,7 +448,8 @@ export function registerDashboardRoutes(app: FastifyInstance, dependencies: Depe
         signals: e.signals,
         budgetMetrics: e.budgetMetrics || null,
         fdrHistory: e.fdrHistory || [],
-        treasury: e.treasury || null
+        treasury: e.treasury || null,
+        resultForecast: e.resultForecast || null
       });
     }
     try {

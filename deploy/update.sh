@@ -6,29 +6,37 @@ APP_USER="vigie"
 API_PORT="${VIGIE_API_PORT:-3211}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="/etc/vigie.env"
-STAGING_DIR="/opt/vigie-staging"
 BACKUP_DIR="/var/backups/vigie"
+STAGING_DIR=""
 SERVICE_STOPPED=0
+DEPLOY_SUCCEEDED=0
 
 log(){ printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 ok(){ printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
 fail(){ printf '\n\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
-recover(){
+cleanup(){
   code=$?
   if (( SERVICE_STOPPED )); then
     printf '\nTentative de redémarrage de Vigie après échec...\n' >&2
     systemctl start vigie >/dev/null 2>&1 || true
   fi
+  if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
+    if (( DEPLOY_SUCCEEDED )); then
+      rm -rf "$STAGING_DIR"
+    else
+      printf 'Staging de diagnostic conservé : %s\n' "$STAGING_DIR" >&2
+    fi
+  fi
   exit "$code"
 }
-trap recover ERR
+trap cleanup EXIT
 
 [[ $EUID -eq 0 ]] || fail "Lancez ce script avec sudo."
 [[ -d "$APP_DIR" ]] || fail "$APP_DIR n'existe pas. Utilisez l'installeur initial."
 [[ -f "$ENV_FILE" ]] || fail "$ENV_FILE est absent."
 [[ -f "$SOURCE_DIR/package.json" ]] || fail "package.json introuvable dans les sources."
 id "$APP_USER" >/dev/null 2>&1 || fail "L'utilisateur système $APP_USER n'existe pas."
-for cmd in node npm psql pg_dump pg_restore rsync curl tar; do command -v "$cmd" >/dev/null 2>&1 || fail "$cmd est absent."; done
+for cmd in node npm psql pg_dump pg_restore rsync curl tar mktemp; do command -v "$cmd" >/dev/null 2>&1 || fail "$cmd est absent."; done
 systemctl cat vigie >/dev/null 2>&1 || fail "Le service systemd vigie n'existe pas."
 
 set -a
@@ -39,9 +47,12 @@ set +a
 EXPECTED_VERSION="$(node -p "require('$SOURCE_DIR/package.json').version")"
 log "Préparation de Vigie v${EXPECTED_VERSION}"
 
+log "Création du staging éphémère"
+STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
+chmod 755 "$STAGING_DIR"
+ok "$STAGING_DIR"
+
 log "Build et quality gate hors production"
-rm -rf "$STAGING_DIR"
-mkdir -p "$STAGING_DIR"
 rsync -a --delete --exclude node_modules --exclude .git --exclude '.env' "$SOURCE_DIR/" "$STAGING_DIR/"
 chown -R "$APP_USER:$APP_USER" "$STAGING_DIR"
 cd "$STAGING_DIR"
@@ -113,5 +124,5 @@ grep -q '"status":"ready"' <<<"$HEALTH_JSON" || fail "La BDD n'est pas prête."
 AUTH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/api/auth/me")"
 [[ "$AUTH_STATUS" == "401" ]] || fail "Authentification inattendue : HTTP $AUTH_STATUS."
 systemctl is-active --quiet vigie || fail "Le service Vigie n'est pas actif."
-rm -rf "$STAGING_DIR"
+DEPLOY_SUCCEEDED=1
 ok "Vigie v${EXPECTED_VERSION} est opérationnelle. BDD existante conservée."

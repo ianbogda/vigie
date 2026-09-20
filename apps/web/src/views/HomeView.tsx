@@ -127,25 +127,30 @@ export function HomeView({
     prev = current?.fdrHistory?.[1],
     agency = !current;
   const fdrDelta = fdr && prev ? Number(fdr.amount) - Number(prev.amount) : null;
-  const trajectory = signals.some((s) => s.level === 'alert')
-    ? 'Action requise'
-    : signals.some((s) => s.level === 'watch')
-      ? 'À surveiller'
-      : 'Trajectoire maîtrisée';
+  const forecast = current?.resultForecast,
+    treasury = current?.treasury,
+    trajectory = !current || !forecast
+      ? 'À construire'
+      : signals.some((s) => s.level === 'alert')
+        ? 'Sous tension'
+        : signals.some((s) => s.level === 'watch')
+          ? 'À surveiller'
+          : 'Maîtrisée';
   return (
     <div className="home fade-in">
       <section className="hero-kpis">
-        <article className={'trajectory ' + (trajectory === 'Action requise' ? 'danger' : '')}>
+        <article className={'trajectory ' + (trajectory === 'Sous tension' ? 'danger' : '')}>
           <Target />
           <span>Trajectoire globale</span>
           <b>{trajectory}</b>
           <small>{agency ? 'Lecture consolidée de l’agence' : current.name}</small>
+          {forecast && <div className="trajectory-range"><span>{eur(forecast.low)}</span><i /><strong>{eur(forecast.central)}</strong><i /><span>{eur(forecast.high)}</span></div>}
         </article>
         <Kpi
           icon={<Coins />}
           label={agency ? 'Budget disponible' : 'Trésorerie disponible'}
-          value={agency ? eur(dash.kpis.totalAvailable) : 'À connecter'}
-          hint={agency ? 'Derniers budgets importés' : '5151 + placements à intégrer'}
+          value={agency ? eur(dash.kpis.totalAvailable) : treasury?.availableBalance == null ? '—' : eur(treasury.availableBalance)}
+          hint={agency ? 'Derniers budgets importés' : treasury ? `5151 ${eur(treasury.currentBalance || 0)} + placements ${eur(treasury.placementsBalance || 0)}` : 'Importer les écritures comptables'}
         />
         <Kpi
           icon={<Landmark />}
@@ -157,8 +162,8 @@ export function HomeView({
         <Kpi
           icon={<TrendingUp />}
           label="Résultat prévisionnel"
-          value="À construire"
-          hint="Analyse financière permanente"
+          value={forecast ? `${eur(forecast.low)} → ${eur(forecast.high)}` : 'À construire'}
+          hint={forecast ? `Central ${eur(forecast.central)} · projection 31/12` : 'Données insuffisantes pour projeter'}
         />
         <Kpi
           icon={<ReceiptText />}
@@ -211,12 +216,13 @@ export function HomeView({
             <Info size={16} />
           </div>
           <div className="landing-list">
-            <Row n="Solde 5151 disponible" v="À connecter" />
-            <Row n="Placements (CAT)" v="À connecter" />
+            <Row n="Solde 5151 disponible" v={treasury?.currentBalance == null ? '—' : eur(treasury.currentBalance)} />
+            <Row n="Placements (506 · 507 · 5081)" v={treasury?.placementsBalance == null ? '—' : eur(treasury.placementsBalance)} />
             <Row n="Encaissements attendus" v="Subventions à intégrer" />
             <Row n="Décaissements prévus" v="Contrats à intégrer" />
             <Row n="Trésorerie projetée au 31/12" v="—" strong />
-            <Row n="FDR projeté" v={fdr ? eur(fdr.amount) : '—'} strong />
+            <Row n="Résultat projeté (central)" v={forecast ? eur(forecast.central) : '—'} />
+            <Row n="FDR projeté" v={fdr && forecast ? eur(Number(fdr.amount) + forecast.central) : fdr ? eur(fdr.amount) : '—'} strong />
           </div>
           <button className="detail-link">
             Voir le calcul détaillé de l'atterrissage <ChevronRight size={15} />
