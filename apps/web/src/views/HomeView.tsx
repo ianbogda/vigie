@@ -182,12 +182,12 @@ export function HomeView({
         <article className="panel execution">
           <div className="panel-title">
             <div>
-              <h3>Exécution budgétaire</h3>
-              <p>Engagement réel comparé à la trajectoire EPLE.</p>
+              <h3>Trajectoire financière</h3>
+              <p>Résultat cumulé constaté et projection d’atterrissage au 31 décembre.</p>
             </div>
-            <span className="pill">Engagement</span>
+            <span className="pill">Atterrissage</span>
           </div>
-          <TrajectoryChart rate={m?.engagementRate} target={m?.trajectoryTarget} />
+          <TrajectoryChart forecast={forecast} />
           {m ? (
             <div className="metric-row">
               <span>

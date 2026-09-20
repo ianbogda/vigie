@@ -132,8 +132,6 @@ STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
 log "Préparation du staging"
 echo "Staging : $STAGING_DIR"
 
-STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
-
 chown "$APP_USER:$APP_USER" "$STAGING_DIR"
 
 sudo -u "$APP_USER" rsync -a \
@@ -241,12 +239,11 @@ log "Déploiement de Vigie v${EXPECTED_VERSION}"
 
 rsync -a \
   --delete \
+  --chown="$APP_USER:$APP_USER" \
   --exclude node_modules \
   --exclude .git \
   --exclude '.env' \
   "$STAGING_DIR/" "$APP_DIR/"
-
-chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
 # Contrôle IMMÉDIAT après rsync, avant toute autre opération.
 check_dist "$APP_DIR" "Production après rsync"

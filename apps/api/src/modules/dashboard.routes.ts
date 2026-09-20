@@ -309,10 +309,41 @@ export function registerDashboardRoutes(app: FastifyInstance, dependencies: Depe
             return { low: Math.max(known, central - uncertainty), central, high: central + uncertainty };
           };
           const dep = projected(expenses, 0.18), rec = projected(revenues, 0.22);
+          const currentResult = revenues.accounted - expenses.accounted;
+          const budgetResult = revenues.budget - expenses.budget;
+          const trajectorySnapshots = (
+            await pool.query(
+              `select id,snapshot_date from budget_snapshots
+               where coalesce(nullif(opale_entity,''),establishment_name)=$1
+                 and extract(year from snapshot_date)=extract(year from $2::date)
+               order by snapshot_date asc,created_at asc`,
+              [e.sources.budget.source_key, e.sources.budget.snapshot_date]
+            )
+          ).rows;
+          const trajectoryPoints: { date: string; result: number }[] = [];
+          for (const snapshot of trajectorySnapshots) {
+            const rows = (
+              await pool.query(`select raw_dimensions,accounted from budget_lines where snapshot_id=$1`, [snapshot.id])
+            ).rows;
+            const amount = (direction: string) =>
+              rows
+                .filter((row: any) => side(row) === direction)
+                .reduce((sum: number, row: any) => sum + Math.abs(Number(row.accounted || 0)), 0);
+            trajectoryPoints.push({
+              date: String(snapshot.snapshot_date),
+              result: amount('REC') - amount('DEP')
+            });
+          }
           e.resultForecast = {
             low: rec.low - dep.high,
             central: rec.central - dep.central,
             high: rec.high - dep.low,
+            current: currentResult,
+            budget: budgetResult,
+            snapshotDate: String(e.sources.budget.snapshot_date),
+            points: trajectoryPoints,
+            projectedRevenues: rec,
+            projectedExpenses: dep,
             method: 'Réalisé + engagé + extrapolation de la trajectoire à date',
             confidence: target >= 0.65 ? 'medium' : 'low'
           };

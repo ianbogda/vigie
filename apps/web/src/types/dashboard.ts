@@ -96,7 +96,21 @@ export type TreasuryContext = {
   series?: TreasurySeries[];
   warning?: string;
 };
-export type Forecast = { low: number; central: number; high: number; method: string; confidence: 'low' | 'medium' | 'high' };
+export type ForecastRange = { low: number; central: number; high: number };
+export type ForecastPoint = { date: string; result: number };
+export type Forecast = {
+  low: number;
+  central: number;
+  high: number;
+  current?: number;
+  budget?: number;
+  snapshotDate?: string;
+  points?: ForecastPoint[];
+  projectedRevenues?: ForecastRange;
+  projectedExpenses?: ForecastRange;
+  method: string;
+  confidence: 'low' | 'medium' | 'high';
+};
 export type Eple = {
   id: string;
   registryId?: number | null;
