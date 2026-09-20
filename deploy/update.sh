@@ -132,14 +132,16 @@ STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
 log "Préparation du staging"
 echo "Staging : $STAGING_DIR"
 
-rsync -a \
+STAGING_DIR="$(mktemp -d /tmp/vigie-deploy-XXXXXXXX)"
+
+chown "$APP_USER:$APP_USER" "$STAGING_DIR"
+
+sudo -u "$APP_USER" rsync -a \
   --delete \
   --exclude node_modules \
   --exclude .git \
   --exclude '.env' \
   "$SOURCE_DIR/" "$STAGING_DIR/"
-
-chown -R "$APP_USER:$APP_USER" "$STAGING_DIR"
 
 STAGING_VERSION="$(node -p "require('$STAGING_DIR/package.json').version")"
 
