@@ -1,6 +1,8 @@
+diff --git a/apps/api/src/modules/dashboard.routes.ts b/apps/api/src/modules/dashboard.routes.ts
 --- a/apps/api/src/modules/dashboard.routes.ts
 +++ b/apps/api/src/modules/dashboard.routes.ts
-@@ -1 +1,12 @@
+@@ -331,3 +331,14 @@
+           // constat jusqu'au 31/12 ; aucun point mensuel fictif n'est créé.
 -          const snapshotYear = new Date(`${e.sources.budget.snapshot_date}T12:00:00`).getFullYear();
 +          const budgetSnapshotRaw = e.sources.budget.snapshot_date;
 +          const budgetSnapshotDate =
@@ -14,9 +16,13 @@
 +                  })();
 +          if (!budgetSnapshotDate) throw new Error('Date de situation budgétaire invalide');
 +          const snapshotYear = Number(budgetSnapshotDate.slice(0, 4));
+           const historyRows = (
+diff --git a/apps/api/src/modules/dashboard.routes.ts b/apps/api/src/modules/dashboard.routes.ts
 --- a/apps/api/src/modules/dashboard.routes.ts
 +++ b/apps/api/src/modules/dashboard.routes.ts
-@@ -1 +1,8 @@
+@@ -345,4 +345,11 @@
+           for (const row of historyRows) {
+             const key = `${row.id}:${row.snapshot_date}`;
 -            const point = snapshots.get(key) || { date: String(row.snapshot_date).slice(0, 10), budgetDep: 0, budgetRec: 0, actualDep: 0, actualRec: 0 };
 +            const rowDate =
 +              row.snapshot_date instanceof Date
@@ -26,14 +32,22 @@
 +                  : null;
 +            if (!rowDate) continue;
 +            const point = snapshots.get(key) || { date: rowDate, budgetDep: 0, budgetRec: 0, actualDep: 0, actualRec: 0 };
+             const direction = side(row);
+diff --git a/apps/api/src/modules/dashboard.routes.ts b/apps/api/src/modules/dashboard.routes.ts
 --- a/apps/api/src/modules/dashboard.routes.ts
 +++ b/apps/api/src/modules/dashboard.routes.ts
-@@ -1 +1 @@
+@@ -388,4 +388,4 @@
+           e.financialTrajectory = {
+             exercise: snapshotYear,
 -            snapshotDate: String(e.sources.budget.snapshot_date).slice(0, 10),
 +            snapshotDate: budgetSnapshotDate,
+             actual: byYear.get(snapshotYear) || [],
+diff --git a/apps/web/src/components/FinancialTrajectoryChart.tsx b/apps/web/src/components/FinancialTrajectoryChart.tsx
 --- a/apps/web/src/components/FinancialTrajectoryChart.tsx
 +++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
-@@ -2,0 +3,8 @@
+@@ -4,3 +4,11 @@
+ const monthLabels = ['Jan.', 'Fév.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
+ 
 +function formatSnapshotDate(value?: string | null) {
 +  if (!value) return null;
 +  const isoDate = value.slice(0, 10);
@@ -42,12 +56,21 @@
 +  return new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit' }).format(date);
 +}
 +
+ /** Displays observed cumulative result and its 31 December landing range. */
+diff --git a/apps/web/src/components/FinancialTrajectoryChart.tsx b/apps/web/src/components/FinancialTrajectoryChart.tsx
 --- a/apps/web/src/components/FinancialTrajectoryChart.tsx
 +++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
-@@ -1,0 +2 @@
+@@ -43,4 +43,5 @@
+   const decemberX = x(12);
+   const previousSeries = Object.entries(trajectory.previous || {}).filter(([, items]) => items.length > 0);
 +  const snapshotLabel = formatSnapshotDate(trajectory.snapshotDate);
+ 
+   return (
+diff --git a/apps/web/src/components/FinancialTrajectoryChart.tsx b/apps/web/src/components/FinancialTrajectoryChart.tsx
 --- a/apps/web/src/components/FinancialTrajectoryChart.tsx
 +++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
-@@ -1 +1 @@
+@@ -75,3 +75,3 @@
+         <line className="financial-today" x1={projectionStartX} x2={projectionStartX} y1={top} y2={height - bottom} />
 -        <text className="financial-today-label" x={projectionStartX + 6} y={top + 13}>Situation au {new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit' }).format(new Date(`${trajectory.snapshotDate}T12:00:00`))}</text>
 +        <text className="financial-today-label" x={projectionStartX + 6} y={top + 13}>{snapshotLabel ? `Situation au ${snapshotLabel}` : 'Situation actuelle'}</text>
+         {monthLabels.map((label, index) => <text key={label} className="financial-month" x={x(index + 1)} y={height - 14} textAnchor="middle">{label}</text>)}
