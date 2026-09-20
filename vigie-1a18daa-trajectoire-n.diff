@@ -1,7 +1,7 @@
 diff --git a/apps/api/src/modules/dashboard.routes.ts b/apps/api/src/modules/dashboard.routes.ts
 --- a/apps/api/src/modules/dashboard.routes.ts
 +++ b/apps/api/src/modules/dashboard.routes.ts
-@@ -350,6 +350,34 @@
+@@ -350,6 +350,35 @@
              list.push({ date: point.date, month: date.getMonth() + 1, value: point.actualRec - point.actualDep });
              byYear.set(year, list);
            }
@@ -40,18 +40,13 @@ diff --git a/apps/api/src/modules/dashboard.routes.ts b/apps/api/src/modules/das
 diff --git a/apps/web/src/components/FinancialTrajectoryChart.tsx b/apps/web/src/components/FinancialTrajectoryChart.tsx
 --- a/apps/web/src/components/FinancialTrajectoryChart.tsx
 +++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
-@@ -5,8 +5,12 @@
-
- /** Displays observed cumulative result and its 31 December landing range. */
+@@ -7,4 +7,7 @@
  export function FinancialTrajectoryChart({ trajectory }: { trajectory?: FinancialTrajectory }) {
 -  if (!trajectory?.actual?.length) {
 -    return <div className="financial-trajectory-empty">Données historisées insuffisantes pour tracer la trajectoire financière.</div>;
 +  if (!trajectory) {
 +    return <div className="financial-trajectory-empty">Données de l'exercice insuffisantes pour tracer la trajectoire financière.</div>;
 +  }
-+
 +  if (!trajectory.actual.length) {
 +    return <div className="financial-trajectory-empty">Aucun réalisé disponible pour l'exercice courant.</div>;
    }
-
-   const width = 820;
