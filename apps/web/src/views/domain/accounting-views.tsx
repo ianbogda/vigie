@@ -1,0 +1,2193 @@
+import { Building2, ChevronRight, Database, ReceiptText, WalletCards, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { IndicatorInfo } from '../../components/IndicatorInfo';
+import { api } from '../../lib/api';
+import { dateFr } from '../../lib/format';
+import type { Eple } from '../../types/dashboard';
+import { eur, median, shortMonth } from './domain-utils';
+
+type AccountingData = { summary: any; accounts: any[]; entries: any[]; signals: any[]; source: any; ygpie1: any };
+const daysSince = (d?: string | null) => {
+  if (!d) return null;
+  const t = new Date(d).getTime();
+  return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86400000)) : null;
+};
+const sourceDate = (v: any) => {
+  if (!v) return null;
+  if (typeof v === 'string') return v;
+  return v.snapshotDate || v.snapshot_date || v.periodTo || v.period_to || null;
+};
+const frDate = (v?: string | null) => dateFr(v);
+
+function FlowBars({ history, kind, exercise }: { history: any[]; kind: 'expense' | 'revenue'; exercise: number }) {
+  const rows = (history || []).filter((x: any) => Number(x.exercise) === exercise);
+  if (!rows.length)
+    return (
+      <div className="flow-chart-unavailable">
+        <Database size={28} />
+        <b>CLCA {exercise} non importé</b>
+        <span>L’évolution mensuelle n’est pas reconstituée à partir d’une autre source.</span>
+      </div>
+    );
+  const field = kind === 'expense' ? 'expenses' : 'revenues';
+  const monthly = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, value: null as number | null }));
+  for (const r of rows) {
+    const m = Number(r.month);
+    if (m >= 1 && m <= 12) monthly[m - 1].value = Number(r[field] || 0);
+  }
+  const now = new Date(),
+    maxMonth = exercise === now.getFullYear() ? now.getMonth() + 1 : 12;
+  for (let i = maxMonth; i < 12; i++) monthly[i].value = null;
+  const max = Math.max(1, ...monthly.map((x) => x.value ?? 0));
+  return (
+    <div className={`flow-bars ${kind}`}>
+      {monthly.map((x) => (
+        <div
+          key={x.month}
+          className={`flow-bar-col ${x.value == null ? 'future' : ''}`}
+          title={
+            x.value == null ? `${shortMonth(x.month)} · aucune donnée CLCA` : `${shortMonth(x.month)} · ${eur(x.value)}`
+          }
+        >
+          <div className="flow-bar-track">
+            {x.value != null && (
+              <i style={{ height: x.value === 0 ? '0' : `${Math.max(2, (x.value / max) * 100)}%` }} />
+            )}
+          </div>
+          <span>{shortMonth(x.month)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+export function FlowView({
+  current,
+  all,
+  onSelect,
+  kind
+}: {
+  current: Eple | null;
+  all: Eple[];
+  onSelect: (id: string) => void;
+  kind: 'expense' | 'revenue';
+}) {
+  const expense = kind === 'expense',
+    label = expense ? 'Dépenses' : 'Recettes';
+  const [data, setData] = useState<any>(null),
+    [aged, setAged] = useState<any>(null),
+    [fin, setFin] = useState<any>(null),
+    [clca, setClca] = useState<any>(null),
+    [loading, setLoading] = useState(false),
+    [exercise, setExercise] = useState<number>(new Date().getFullYear());
+  useEffect(() => {
+    if (!current?.opaleEntity) {
+      setData(null);
+      setAged(null);
+      setFin(null);
+      setClca(null);
+      return;
+    }
+    let live = true;
+    setLoading(true);
+    Promise.all([
+      api.accounting(current.opaleEntity),
+      api.aged(current.opaleEntity, expense ? 'suppliers' : 'clients').catch(() => null),
+      api.financial(current.opaleEntity).catch(() => null),
+      api.clcaMonthly(current.opaleEntity).catch(() => null)
+    ])
+      .then(([a, g, f, c]) => {
+        if (live) {
+          setData(a);
+          setAged(g);
+          setFin(f);
+          setClca(c);
+        }
+      })
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [current?.opaleEntity, kind]);
+  if (!current) return <AgencyFlowView all={all} onSelect={onSelect} kind={kind} />;
+  if (loading)
+    return (
+      <div className="page">
+        <div className="loading">Construction de la vue {label}…</div>
+      </div>
+    );
+  const allEntries = (data?.entries || []).filter((r: any) => String(r.account || '').startsWith(expense ? '6' : '7'));
+  const clcaHistory: any[] = clca?.rows || [];
+  const yconsHistory: any[] = expense ? fin?.executionHistory?.expenses || [] : fin?.executionHistory?.revenues || [];
+  const exercises: number[] = [
+    ...new Set<number>(
+      [
+        ...allEntries.map((r: any) => {
+          const d = new Date(r.periodDate);
+          return Number.isNaN(d.getTime()) ? null : d.getFullYear();
+        }),
+        ...yconsHistory.map((r: any) => Number(r.exercise)),
+        ...clcaHistory.map((r: any) => Number(r.exercise))
+      ].filter((y: any): y is number => Number.isInteger(y))
+    )
+  ].sort((a, b) => b - a);
+  const currentExercise: number = new Date().getFullYear();
+  const selectedExercise: number = exercises.includes(exercise)
+    ? exercise
+    : exercises.includes(currentExercise)
+      ? currentExercise
+      : (exercises[0] ?? currentExercise);
+  const entries = allEntries.filter((r: any) => new Date(r.periodDate).getFullYear() === selectedExercise),
+    total = entries.reduce((n: number, r: any) => n + Math.abs(Number(r.movement || 0)), 0),
+    now = new Date(),
+    cut = new Date(now.getTime() - 30 * 86400000),
+    recent = selectedExercise === now.getFullYear() ? entries.filter((r: any) => new Date(r.periodDate) >= cut) : [],
+    recentTotal = recent.reduce((n: number, r: any) => n + Math.abs(Number(r.movement || 0)), 0);
+  const byAccount = new Map<string, any>();
+  for (const r of entries) {
+    const k = String(r.account);
+    const a = byAccount.get(k) || { account: k, label: r.accountLabel || '', amount: 0, count: 0 };
+    a.amount += Math.abs(Number(r.movement || 0));
+    a.count++;
+    byAccount.set(k, a);
+  }
+  const accounts = [...byAccount.values()].sort((a, b) => b.amount - a.amount).slice(0, 6);
+  const exec = expense ? fin?.expenses : fin?.revenues,
+    agedSum = aged?.summary || null,
+    old = agedSum?.old ?? null,
+    due = agedSum?.due ?? null,
+    tnr = !expense && fin?.balance?.tnr != null ? Number(fin.balance.tnr) : null,
+    tnrExercise = !expense && fin?.balance?.exercise != null ? Number(fin.balance.exercise) : null;
+  const parties = new Map<string, any>();
+  for (const r of aged?.rows || []) {
+    const k = r.party_label || r.party_id || 'Tiers non renseigné',
+      a = parties.get(k) || { name: k, amount: 0, pieces: 0, old: 0 };
+    a.amount += Math.abs(Number(r.total || 0));
+    a.old += Math.abs(Number(r.before_121 || 0));
+    a.pieces++;
+    parties.set(k, a);
+  }
+  const topParties = [...parties.values()].sort((a, b) => b.amount - a.amount).slice(0, 5);
+  return (
+    <div className={`page flow-page ${kind}`}>
+      <div className="financial-head">
+        <div>
+          <span>{label.toUpperCase()}</span>
+          <h2>
+            {expense ? <ReceiptText size={24} /> : <WalletCards size={24} />}{' '}
+            {expense ? 'Suivi du cycle de la dépense' : 'Encaissements et recouvrement'}
+          </h2>
+          <p>Chaque indicateur est relié aux données sources disponibles.</p>
+        </div>
+        <label className="flow-exercise">
+          Exercice
+          <select value={selectedExercise} onChange={(e) => setExercise(Number(e.target.value))}>
+            {exercises.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <section className="flow-kpis">
+        <article>
+          <span>{label} de l'exercice</span>
+          <b>{eur(total)}</b>
+          <small>
+            écritures classe {expense ? '6' : '7'} · {selectedExercise}
+          </small>
+        </article>
+        <article>
+          <span>{expense ? 'Dépenses' : 'Encaissements'} · 30 jours</span>
+          <b>{selectedExercise === now.getFullYear() ? eur(recentTotal) : '—'}</b>
+          <small>
+            {selectedExercise === now.getFullYear()
+              ? `${recent.length} mouvement(s)`
+              : 'indicateur réservé à l’exercice courant'}
+          </small>
+        </article>
+        <article className={due ? 'attention' : ''}>
+          <span>{expense ? 'Dettes échues' : 'Créances à recouvrer'}</span>
+          <b>{due == null ? '—' : eur(due)}</b>
+          <small>{aged?.sourceType || 'balance âgée non importée'}</small>
+        </article>
+        <article className={old ? 'attention' : ''}>
+          <span>{expense ? 'Dettes anciennes' : 'Créances > 121 jours'}</span>
+          <b>{old == null ? '—' : eur(old)}</b>
+          <small>{old == null ? 'donnée indisponible' : 'situation issue de la dernière balance âgée'}</small>
+        </article>
+        <article>
+          <span>
+            {expense ? (
+              'Comptes mouvementés'
+            ) : (
+              <>
+                Taux de non-recouvrement (TnR) <IndicatorInfo id="TNR" />
+              </>
+            )}
+          </span>
+          <b>{expense ? accounts.length : tnr == null ? '—' : `${tnr.toFixed(1)} %`}</b>
+          <small>
+            {expense
+              ? 'top comptes affichés'
+              : tnrExercise == null
+                ? 'EBLC non disponible'
+                : `EBLC · exercice ${tnrExercise}`}
+          </small>
+        </article>
+      </section>
+      <div className="flow-grid">
+        <section className="treasury-panel">
+          <h3>Évolution mensuelle des {label.toLowerCase()}</h3>
+          <p className="flow-muted">
+            Exercice {selectedExercise} · source CLCA ventilée par mois. Une source absente n’est jamais remplacée par
+            une estimation.
+          </p>
+          <FlowBars history={clcaHistory} kind={kind} exercise={selectedExercise} />
+        </section>
+        <section className="treasury-panel">
+          <h3>Principaux comptes</h3>
+          <div className="accounting-table-wrap flow-short">
+            <table className="accounting-table">
+              <thead>
+                <tr>
+                  <th>Compte</th>
+                  <th>Libellé</th>
+                  <th className="num">Montant</th>
+                  <th className="num">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.map((a) => (
+                  <tr key={a.account}>
+                    <td>
+                      <b>{a.account}</b>
+                    </td>
+                    <td>{a.label || '—'}</td>
+                    <td className="num">{eur(a.amount)}</td>
+                    <td className="num">{total ? `${((a.amount / total) * 100).toFixed(1)} %` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <div className="flow-grid">
+        <section className="treasury-panel">
+          <h3>{expense ? 'Principaux fournisseurs' : 'Principaux débiteurs'}</h3>
+          {topParties.length ? (
+            <div className="accounting-table-wrap flow-short">
+              <table className="accounting-table">
+                <thead>
+                  <tr>
+                    <th>Tiers</th>
+                    <th className="num">Montant</th>
+                    <th className="num">Pièces</th>
+                    <th className="num">Ancien</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topParties.map((p) => (
+                    <tr key={p.name}>
+                      <td>
+                        <b>{p.name}</b>
+                      </td>
+                      <td className="num">{eur(p.amount)}</td>
+                      <td className="num">{p.pieces}</td>
+                      <td className="num">{eur(p.old)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="flow-empty">Importer {expense ? 'YBALAF' : 'YBALAC'} pour alimenter cette analyse.</p>
+          )}
+        </section>
+        <section className="treasury-panel">
+          <h3>Points de vigilance</h3>
+          <div className="flow-alerts">
+            {(data?.signals || []).slice(0, 6).map((s: any) => (
+              <div key={`${s.code}-${s.account}`} className={`flow-alert ${s.level}`}>
+                <b>{s.title}</b>
+                <span>{s.detail}</span>
+              </div>
+            ))}
+            {!(data?.signals || []).length && (
+              <p className="flow-empty">Aucun signal comptable sur les données disponibles.</p>
+            )}
+          </div>
+        </section>
+      </div>
+      <section className="treasury-panel">
+        <h3>
+          Dernières écritures de {label.toLowerCase()} · {selectedExercise}
+        </h3>
+        <div className="accounting-table-wrap">
+          <table className="accounting-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Journal</th>
+                <th>Compte</th>
+                <th>Libellé</th>
+                <th className="num">Débit</th>
+                <th className="num">Crédit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.slice(0, 12).map((r: any, i: number) => (
+                <tr key={`${r.periodDate}-${r.account}-${i}`}>
+                  <td>{frDate(r.periodDate)}</td>
+                  <td>{r.journal || '—'}</td>
+                  <td>
+                    <b>{r.account}</b>
+                  </td>
+                  <td>{r.accountLabel || '—'}</td>
+                  <td className="num">{eur(r.debit)}</td>
+                  <td className="num">{eur(r.credit)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+export function AgencyFlowView({
+  all,
+  onSelect,
+  kind
+}: {
+  all: Eple[];
+  onSelect: (id: string) => void;
+  kind: 'expense' | 'revenue';
+}) {
+  const expense = kind === 'expense',
+    label = expense ? 'Dépenses' : 'Recettes';
+  const [rows, setRows] = useState<any[]>([]),
+    [loading, setLoading] = useState(true),
+    [exercise, setExercise] = useState(new Date().getFullYear());
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    Promise.all(
+      all.map(async (e) => {
+        if (!e.opaleEntity) return null;
+        const [a, g, c] = await Promise.all([
+          api.accounting(e.opaleEntity).catch(() => null),
+          api.aged(e.opaleEntity, expense ? 'suppliers' : 'clients').catch(() => null),
+          api.clcaMonthly(e.opaleEntity).catch(() => null)
+        ]);
+        return { e, a, g, c };
+      })
+    )
+      .then((x) => live && setRows(x.filter(Boolean) as any[]))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [all, kind]);
+  const exercises = [
+      ...new Set<number>(
+        rows
+          .flatMap((r) => [
+            ...(r.a?.entries || []).map((x: any) => new Date(x.periodDate).getFullYear()),
+            ...(r.c?.exercises || [])
+          ])
+          .filter((x: any): x is number => Number.isInteger(x))
+      )
+    ].sort((a, b) => b - a),
+    selected = exercises.includes(exercise)
+      ? exercise
+      : exercises.includes(new Date().getFullYear())
+        ? new Date().getFullYear()
+        : (exercises[0] ?? new Date().getFullYear());
+  const stats = rows
+    .map(({ e, a, g }: any) => {
+      const entries = (a?.entries || []).filter(
+          (x: any) =>
+            String(x.account || '').startsWith(expense ? '6' : '7') && new Date(x.periodDate).getFullYear() === selected
+        ),
+        total = entries.reduce((n: number, x: any) => n + Math.abs(Number(x.movement || 0)), 0),
+        months = new Map<number, number>();
+      for (const x of entries) {
+        const m = new Date(x.periodDate).getMonth() + 1;
+        months.set(m, (months.get(m) || 0) + Math.abs(Number(x.movement || 0)));
+      }
+      const ordered = [...months.entries()].sort((a, b) => a[0] - b[0]).map((x) => x[1]),
+        recent = ordered.slice(-2),
+        previous = ordered.slice(-5, -2),
+        ravg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 0,
+        pavg = previous.length ? previous.reduce((a, b) => a + b, 0) / previous.length : 0,
+        accel = pavg ? (ravg / pavg - 1) * 100 : 0,
+        evolutionEur = ordered.length > 1 ? ordered.at(-1)! - ordered.at(-2)! : ordered.at(-1) || 0,
+        latestTs = Math.max(0, ...entries.map((x: any) => new Date(x.periodDate).getTime()).filter(Number.isFinite)),
+        elapsedDays = latestTs ? Math.max(0, Math.floor((Date.now() - latestTs) / 86400000)) : 999,
+        aged = g?.summary || {},
+        parties = new Map<string, number>();
+      for (const x of g?.rows || []) {
+        const k = x.party_label || x.party_id || 'Tiers non renseigné';
+        parties.set(k, (parties.get(k) || 0) + Math.abs(Number(x.total || 0)));
+      }
+      const partyVals = [...parties.values()].sort((a, b) => b - a),
+        agedTotal = Math.abs(Number(aged.total || 0)),
+        concentration = partyVals.length && agedTotal ? (partyVals[0] / agedTotal) * 100 : 0;
+      return {
+        e,
+        total,
+        accel,
+        evolutionEur,
+        elapsedDays,
+        due: Math.abs(Number(aged.due || 0)),
+        old: Math.abs(Number(aged.old || 0)),
+        agedTotal,
+        concentration,
+        parties: parties.size,
+        entries: entries.length
+      };
+    })
+    .sort((a, b) => b.old + b.due - (a.old + a.due));
+  const total = stats.reduce((n, r) => n + r.total, 0),
+    alerts = stats.filter((r) => r.old > 0 || r.accel > 30 || r.concentration > 50),
+    red = stats.filter((r) => r.old > 0 && r.agedTotal > 0 && r.old / r.agedTotal > 0.25).length,
+    accelerating = stats.filter((r) => r.accel > 30).length,
+    concentrated = stats.filter((r) => r.concentration > 50).length,
+    oldTotal = stats.reduce((n, r) => n + r.old, 0);
+  const bubble = stats.filter((r) => r.total > 0),
+    maxTotal = Math.max(1, ...bubble.map((r) => r.total)),
+    maxEvolution = Math.max(1, ...bubble.map((r) => Math.abs(r.evolutionEur || 0))),
+    maxConcentration = Math.max(1, ...bubble.map((r) => r.concentration || 0));
+  if (loading)
+    return (
+      <div className="page">
+        <div className="loading">Construction de la vue agence {label}…</div>
+      </div>
+    );
+  return (
+    <div className={`page flow-page agency-flow ${kind}`}>
+      <div className="financial-head">
+        <div>
+          <span>{label.toUpperCase()} · VUE AGENCE</span>
+          <h2>{expense ? 'Exécution et évolution des dépenses' : 'Encaissements et évolution des recettes'}</h2>
+          <p>
+            {expense
+              ? 'Repérer immédiatement les accélérations, concentrations et ruptures de rythme.'
+              : 'Repérer les accélérations, stocks anciens et concentrations de créances.'}
+          </p>
+        </div>
+        <label className="flow-exercise">
+          Exercice
+          <select value={selected} onChange={(e) => setExercise(Number(e.target.value))}>
+            {exercises.map((y) => (
+              <option key={y}>{y}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <section className="flow-kpis">
+        <article>
+          <span>{label} cumulées</span>
+          <b>{eur(total)}</b>
+          <small>{stats.length} EPLE avec données</small>
+        </article>
+        <article className={red ? 'attention' : ''}>
+          <span>EPLE en alerte rouge</span>
+          <b>{red}</b>
+          <small>stock ancien significatif</small>
+        </article>
+        <article className={accelerating ? 'attention' : ''}>
+          <span>EPLE avec accélération</span>
+          <b>{accelerating}</b>
+          <small>&gt; +30 % sur le rythme récent</small>
+        </article>
+        <article className={expense && concentrated ? 'attention' : ''}>
+          <span>{expense ? 'Forte concentration' : 'Créances anciennes'}</span>
+          <b>{expense ? concentrated : eur(oldTotal)}</b>
+          <small>{expense ? '&gt; 50 % sur un tiers' : '&gt; 121 jours'}</small>
+        </article>
+      </section>
+      <div className="agency-watch-grid">
+        <section className="treasury-panel">
+          <h3>
+            {expense ? 'Exécution et évolution des dépenses par EPLE' : 'Volume et évolution des recettes par EPLE'}
+          </h3>
+          <p className="flow-muted">
+            X = montant cumulé · Y = évolution du dernier mois en € · couleur = temps depuis le dernier mouvement ·
+            taille = concentration sur le premier tiers.
+          </p>
+          <div className="agency-scatter">
+            {bubble.length ? (
+              <svg viewBox="0 0 820 390">
+                <g className="scatter-grid">
+                  {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+                    <line key={`v${t}`} x1={70 + t * 650} y1="30" x2={70 + t * 650} y2="320" />
+                  ))}
+                  {[-1, -0.5, 0, 0.5, 1].map((t) => (
+                    <line key={`h${t}`} x1="70" y1={175 - t * 135} x2="720" y2={175 - t * 135} />
+                  ))}
+                </g>
+                <line className="scatter-axis" x1="70" y1="320" x2="720" y2="320" />
+                <line className="scatter-axis" x1="70" y1="30" x2="70" y2="320" />
+                <line className="scatter-zero" x1="70" y1="175" x2="720" y2="175" />
+                {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+                  <text key={`xt${t}`} x={70 + t * 650} y="342" textAnchor="middle">
+                    {eur(maxTotal * t)}
+                  </text>
+                ))}
+                {[-1, -0.5, 0, 0.5, 1].map((t) => (
+                  <text key={`yt${t}`} x="62" y={179 - t * 135} textAnchor="end">
+                    {eur(maxEvolution * t)}
+                  </text>
+                ))}
+                {bubble.map((r) => {
+                  const x = 70 + (r.total / maxTotal) * 650,
+                    y = 175 - (r.evolutionEur / maxEvolution) * 135,
+                    rad = 8 + (r.concentration / maxConcentration) * 15,
+                    sev = r.elapsedDays > 90 ? 'alert' : r.elapsedDays > 30 ? 'watch' : 'ok';
+                  return (
+                    <g key={r.e.id} className={`agency-scatter-point ${sev}`} onClick={() => onSelect(r.e.id)}>
+                      <circle cx={x} cy={Math.max(35, Math.min(315, y))} r={rad} />
+                      <text x={x + rad + 4} y={Math.max(35, Math.min(315, y)) - 3}>
+                        {r.e.name.slice(0, 18)}
+                      </text>
+                      <title>{`${r.e.name} · cumul ${eur(r.total)} · évolution ${r.evolutionEur >= 0 ? '+' : ''}${eur(r.evolutionEur)} · dernier mouvement ${r.elapsedDays} j · concentration ${r.concentration.toFixed(0)} %`}</title>
+                    </g>
+                  );
+                })}
+                <text x="395" y="370" textAnchor="middle">
+                  Montant cumulé (€) →
+                </text>
+                <text x="18" y="175" transform="rotate(-90 18 175)" textAnchor="middle">
+                  Évolution dernier mois (€)
+                </text>
+              </svg>
+            ) : (
+              <div className="agency-fin-empty">Données insuffisantes pour positionner les EPLE.</div>
+            )}
+          </div>
+          <div className="agency-scatter-legend">
+            <div>
+              <b>Temps depuis le dernier mouvement</b>
+              <span>
+                <i className="ok" /> ≤ 30 j
+              </span>
+              <span>
+                <i className="watch" /> 31–90 j
+              </span>
+              <span>
+                <i className="alert" /> &gt; 90 j
+              </span>
+            </div>
+            <div>
+              <b>Taille de la bulle</b>
+              <span>Concentration sur le premier tiers</span>
+            </div>
+          </div>
+        </section>
+        <section className="treasury-panel">
+          <h3>Situations à contrôler</h3>
+          <div className="agency-alert-table">
+            {alerts.slice(0, 8).map((r) => (
+              <button key={r.e.id} onClick={() => onSelect(r.e.id)}>
+                <span className={`agency-dot ${r.old > 0 ? 'alert' : 'watch'}`} />
+                <b>{r.e.name}</b>
+                <span>
+                  {r.old > 0
+                    ? `${expense ? 'Dettes' : 'Créances'} anciennes : ${eur(r.old)}`
+                    : r.concentration > 50
+                      ? `Concentration : ${r.concentration.toFixed(0)} % sur un tiers`
+                      : `Accélération récente : +${r.accel.toFixed(0)} %`}
+                </span>
+                <ChevronRight size={16} />
+              </button>
+            ))}
+            {!alerts.length && (
+              <p className="flow-empty">Aucune situation particulière détectée sur les données disponibles.</p>
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+export function AccountingView({ current }: { current: Eple }) {
+  const [data, setData] = useState<AccountingData | null>(null),
+    [financial, setFinancial] = useState<any | null>(null),
+    [loading, setLoading] = useState(true),
+    [tab, setTab] = useState<'summary' | 'balanceSheet' | 'accounts' | 'entries' | 'reconcile'>('summary'),
+    [exercise, setExercise] = useState<number>(new Date().getFullYear()),
+    [query, setQuery] = useState(''),
+    [account, setAccount] = useState(''),
+    [age, setAge] = useState('all'),
+    [selected, setSelected] = useState<any | null>(null),
+    [watchFilter, setWatchFilter] = useState<'all' | 'alert' | 'watch'>('all');
+  const [ygAccount, setYgAccount] = useState('');
+  const ygPiecesRef = useRef<HTMLDivElement | null>(null);
+  const accountingKey = current.opaleEntity || current.uai || current.id;
+  const selectYgAccount = (value: string) => {
+    setYgAccount(value);
+    requestAnimationFrame(() => ygPiecesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    setFinancial(null);
+    setYgAccount('');
+    setLoading(true);
+    if (!accountingKey) {
+      setLoading(false);
+      return () => {
+        live = false;
+      };
+    }
+    Promise.allSettled([api.accounting(accountingKey), api.financial(accountingKey)])
+      .then(([a, f]) => {
+        if (!live) return;
+        setData(a.status === 'fulfilled' ? a.value : null);
+        setFinancial(f.status === 'fulfilled' ? f.value : null);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [accountingKey]);
+  if (loading)
+    return (
+      <div className="page">
+        <div className="loading">Construction de la vue Comptabilité générale…</div>
+      </div>
+    );
+  const accountingExercises: number[] = [
+    ...new Set<number>(
+      (data?.entries || [])
+        .map((r: any) => {
+          const d = new Date(r.periodDate);
+          return Number.isNaN(d.getTime()) ? null : d.getFullYear();
+        })
+        .filter((y: any): y is number => Number.isInteger(y))
+    )
+  ].sort((a: number, b: number) => b - a);
+  const currentAccountingExercise = new Date().getFullYear();
+  const selectedAccountingExercise: number = accountingExercises.includes(exercise)
+    ? exercise
+    : accountingExercises.includes(currentAccountingExercise)
+      ? currentAccountingExercise
+      : (accountingExercises[0] ?? currentAccountingExercise);
+  const yearEntries = (data?.entries || []).filter((r: any) => {
+    const d = new Date(r.periodDate);
+    return !Number.isNaN(d.getTime()) && d.getFullYear() === selectedAccountingExercise;
+  });
+  if (!data)
+    return (
+      <div className="page fade-in accounting-establishment">
+        <div className="financial-head">
+          <div>
+            <span>COMPTABILITÉ GÉNÉRALE</span>
+            <h2>
+              <Database size={24} /> Situation et contrôles comptables
+            </h2>
+            <p>La vue est disponible, mais les données comptables n’ont pas pu être chargées pour cet établissement.</p>
+          </div>
+        </div>
+        <section className="treasury-panel">
+          <div className="accounting-note">
+            <b>Données indisponibles.</b> Vérifier le rattachement UAI / ETS Op@le et les imports de l’établissement.
+          </div>
+        </section>
+      </div>
+    );
+  const entries = yearEntries.filter((r: any) => {
+    const q = query.toLowerCase();
+    const okq =
+      !q ||
+      [r.account, r.accountLabel, r.journal, r.movementKind, JSON.stringify(r.rawData || {})].some((x) =>
+        String(x || '')
+          .toLowerCase()
+          .includes(q)
+      );
+    const oka = !account || String(r.account).startsWith(account);
+    const days = daysSince(r.periodDate) ?? 0;
+    const okage =
+      age === 'all' ||
+      (age === '30' && days <= 30) ||
+      (age === '60' && days > 30 && days <= 60) ||
+      (age === '90' && days > 60 && days <= 90) ||
+      (age === 'old' && days > 90);
+    return okq && oka && okage;
+  });
+  const ygPieces = (data.ygpie1?.pieces || []).filter((r: any) => !ygAccount || String(r.account) === ygAccount);
+  const ygSelectedAccount = ygAccount
+    ? (data.ygpie1?.accounts || []).find((a: any) => String(a.account) === ygAccount)
+    : null;
+  const open = (a: any) => {
+    setSelected(a);
+    setAccount(a.account);
+    setTab('entries');
+  };
+  const signalByAccount = new Map<string, any[]>();
+  for (const s of data.signals || []) {
+    if (!s.account) continue;
+    const xs = signalByAccount.get(String(s.account)) || [];
+    xs.push(s);
+    signalByAccount.set(String(s.account), xs);
+  }
+  const ygByAccount = new Map<string, any>((data.ygpie1?.accounts || []).map((x: any) => [String(x.account), x]));
+  const watched = data.accounts
+    .map((a: any) => {
+      const sig = signalByAccount.get(String(a.account)) || [],
+        yg = ygByAccount.get(String(a.account)),
+        old = Number(yg?.oldOver90 || 0),
+        lastAge = daysSince(a.lastDate),
+        level = sig.some((s: any) => s.level === 'alert') ? 'alert' : sig.length || old > 0 ? 'watch' : null;
+      const reason =
+        sig[0]?.title ||
+        (old > 0
+          ? 'Pièces non soldées > 90 jours'
+          : lastAge != null && lastAge > 90
+            ? 'Dernier mouvement > 90 jours'
+            : '');
+      return { ...a, level, reason, oldOver90: old, lastAge };
+    })
+    .filter((a: any) => a.level);
+  const filteredWatched = watched.filter((a: any) => watchFilter === 'all' || a.level === watchFilter);
+  const alertCount = watched.filter((a: any) => a.level === 'alert').length,
+    watchCount = watched.filter((a: any) => a.level === 'watch').length;
+  const latestIndicator =
+    [...(financial?.indicatorHistory || [])].sort((a: any, b: any) => Number(b.exercise) - Number(a.exercise))[0] || {};
+  const treasury = latestIndicator.treasury ?? financial?.balance?.treasury ?? current.treasury?.currentBalance ?? null,
+    fdr = latestIndicator.fdr ?? financial?.fdr?.amount ?? null,
+    bfr = latestIndicator.bfr ?? null,
+    result = latestIndicator.result ?? null,
+    receivables = financial?.receivables?.total ?? null,
+    payables = financial?.payables?.total ?? null;
+  const controlCards = [
+    {
+      title: 'Comptes à contrôler',
+      value: `${watched.length} compte${watched.length > 1 ? 's' : ''}`,
+      detail: `${alertCount} alerte(s) · ${watchCount} vigilance(s)`,
+      level: alertCount ? 'alert' : watchCount ? 'watch' : 'ok'
+    },
+    {
+      title: 'Pièces non soldées',
+      value: data.ygpie1?.available ? `${data.ygpie1.summary.pieceCount} pièce(s)` : 'Non alimenté',
+      detail: data.ygpie1?.available ? `${eur(data.ygpie1.summary.ageAmounts.old)} > 90 jours` : 'Importer YGPIE1',
+      level: data.ygpie1?.summary?.ageBuckets?.old ? 'watch' : 'ok'
+    },
+    {
+      title: 'Rapprochement trésorerie',
+      value: treasury == null ? 'À alimenter' : eur(treasury),
+      detail: 'Solde comptable disponible',
+      level: treasury == null ? 'missing' : 'ok'
+    },
+    {
+      title: 'Écritures anciennes',
+      value: `${data.summary.oldEntries || 0}`,
+      detail: 'mouvements > 90 jours',
+      level: data.summary.oldEntries ? 'watch' : 'ok'
+    }
+  ];
+  const balanceAccounts = (data.accounts || []).map((a: any) => ({
+    ...a,
+    account: String(a.account || ''),
+    balance: Number(a.balance || 0),
+    debit: Number(a.debit || 0),
+    credit: Number(a.credit || 0)
+  }));
+  const classRows = [1, 2, 3, 4, 5].map((cls) => {
+    const xs = balanceAccounts.filter((a: any) => a.account.startsWith(String(cls))),
+      debit = xs.reduce((n: number, a: any) => n + Math.max(a.balance, 0), 0),
+      credit = xs.reduce((n: number, a: any) => n + Math.max(-a.balance, 0), 0);
+    return { cls, debit, credit, net: debit - credit, count: xs.length };
+  });
+  const classMap = new Map(classRows.map((x) => [x.cls, x]));
+  const classAmount = (cls: number, side: 'debit' | 'credit') => Number(classMap.get(cls)?.[side] || 0);
+  const resultFromAccounts = balanceAccounts
+    .filter((a: any) => a.account.startsWith('6') || a.account.startsWith('7'))
+    .reduce((n: number, a: any) => n - a.balance, 0);
+  const fixedGross = classAmount(2, 'debit'),
+    fixedContra = classAmount(2, 'credit'),
+    fixedNet = fixedGross - fixedContra;
+  const stocks = classAmount(3, 'debit'),
+    thirdDebit = classAmount(4, 'debit'),
+    cashDebit = classAmount(5, 'debit');
+  const stableBase = classAmount(1, 'credit'),
+    stableDebit = classAmount(1, 'debit');
+  const thirdCredit = classAmount(4, 'credit'),
+    cashCredit = classAmount(5, 'credit');
+  const loss = Math.max(0, -resultFromAccounts),
+    profit = Math.max(0, resultFromAccounts);
+  const highAsset = Math.max(0, fixedNet) + stableDebit + loss,
+    lowAsset = stocks + thirdDebit + cashDebit,
+    totalAsset = highAsset + lowAsset;
+  const highLiability = stableBase + profit,
+    lowLiability = thirdCredit + cashCredit,
+    totalLiability = highLiability + lowLiability;
+  const assetPosts = [
+    { key: 'fixed', label: 'Immobilisé net', amount: highAsset, css: 'd1' },
+    { key: 'stocks', label: 'Stocks', amount: stocks, css: 'd2' },
+    { key: 'receivables', label: 'Créances / tiers débiteurs', amount: thirdDebit, css: 'd3' },
+    { key: 'cash', label: 'Trésorerie', amount: cashDebit, css: 'd4' }
+  ].filter((x) => x.amount > 0);
+  const liabilityPosts = [
+    { key: 'stable', label: 'Ressources stables', amount: highLiability, css: 'p1' },
+    { key: 'third', label: 'Tiers créditeurs', amount: thirdCredit, css: 'p2' },
+    { key: 'cash', label: 'Comptes financiers créditeurs', amount: cashCredit, css: 'p3' }
+  ].filter((x) => x.amount > 0);
+  const conic = (posts: { amount: number }[], total: number, colors: string[]) => {
+    let at = 0;
+    return `conic-gradient(${posts
+      .map((p, i) => {
+        const from = at,
+          to = at + (total ? (p.amount / total) * 100 : 0);
+        at = to;
+        return `${colors[i % colors.length]} ${from}% ${to}%`;
+      })
+      .join(',')})`;
+  };
+  const balanceGap = totalAsset - totalLiability,
+    totalBalance = Math.max(totalAsset, totalLiability, 1);
+  const balancePct = (v: number) => `${((v / totalBalance) * 100).toFixed(1).replace('.', ',')} %`;
+  const balanceRows = {
+    assetHigh: [
+      { code: '2', label: 'Immobilisations brutes', amount: fixedGross },
+      { code: '28', label: 'Amortissements et dépréciations', amount: -fixedContra },
+      ...(stableDebit ? [{ code: '1D', label: 'Comptes de capitaux débiteurs', amount: stableDebit }] : []),
+      ...(loss ? [{ code: 'R', label: 'Perte de l’exercice', amount: loss }] : [])
+    ],
+    assetLow: [
+      { code: '3', label: 'Stocks et en-cours', amount: stocks },
+      { code: '4', label: 'Créances et autres comptes de tiers débiteurs', amount: thirdDebit },
+      { code: '5', label: 'Disponibilités et comptes financiers débiteurs', amount: cashDebit }
+    ],
+    liabilityHigh: [
+      { code: '1', label: 'Capitaux, réserves et financements', amount: stableBase },
+      ...(profit ? [{ code: 'R', label: 'Résultat bénéficiaire de l’exercice', amount: profit }] : [])
+    ],
+    liabilityLow: [
+      { code: '4', label: 'Dettes et comptes de tiers créditeurs', amount: thirdCredit },
+      { code: '5', label: 'Comptes financiers créditeurs', amount: cashCredit }
+    ]
+  };
+  const BalanceBlock = ({
+    title,
+    total,
+    rows,
+    side
+  }: {
+    title: string;
+    total: number;
+    rows: any[];
+    side: 'asset' | 'liability';
+  }) => (
+    <div className={`balance-sheet-block ${side}`}>
+      <div className="balance-sheet-block-head">
+        <b>{title}</b>
+        <strong>{eur(total)}</strong>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Classe</th>
+            <th>Libellé</th>
+            <th>Montant</th>
+            <th>% bilan</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows
+            .filter((r) => Math.abs(r.amount) > 0.005)
+            .map((r) => (
+              <tr key={`${side}-${title}-${r.code}`}>
+                <td>
+                  <b>{r.code}</b>
+                </td>
+                <td>{r.label}</td>
+                <td className="num">{eur(r.amount)}</td>
+                <td className="num">{balancePct(Math.abs(r.amount))}</td>
+              </tr>
+            ))}
+          <tr className="balance-sheet-subtotal">
+            <td colSpan={2}>{title}</td>
+            <td className="num">{eur(total)}</td>
+            <td className="num">{balancePct(total)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+  const sources = [
+    { name: 'Balance', desc: 'Soldes des comptes', date: current.freshness },
+    { name: 'YGPIE1', desc: 'Pièces non soldées', date: data.ygpie1?.source?.snapshotDate || null },
+    {
+      name: 'Écritures 1 à 8',
+      desc: data.source?.sourceFormat || 'Données comptables',
+      date: data.source?.periodTo || null
+    },
+    {
+      name: 'YFDR',
+      desc: 'Fonds de roulement',
+      date: financial?.sources?.YFDR || financial?.fdr?.snapshotDate || null
+    },
+    { name: 'EBLC', desc: 'Balance / analyse financière', date: financial?.sources?.EBLC || null }
+  ];
+  return (
+    <div className="page fade-in accounting-establishment">
+      <div className="financial-head">
+        <div>
+          <span>COMPTABILITÉ GÉNÉRALE</span>
+          <h2>
+            <Database size={24} /> Situation et contrôles comptables
+          </h2>
+          <p>
+            Repérer un point de vigilance, identifier le compte puis descendre jusqu’aux écritures qui l’expliquent.
+          </p>
+        </div>
+        <label className="flow-exercise">
+          Exercice
+          <select value={selectedAccountingExercise} onChange={(e) => setExercise(Number(e.target.value))}>
+            {accountingExercises.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <section className="accounting-summary-grid">
+        <article>
+          <span>Trésorerie</span>
+          <b>{eur(treasury)}</b>
+          <small>position comptable</small>
+        </article>
+        <article>
+          <span>
+            Fonds de roulement <IndicatorInfo id="FDR" />
+          </span>
+          <b>{eur(fdr)}</b>
+          <small>contexte financier</small>
+        </article>
+        <article>
+          <span>
+            BFdR <IndicatorInfo id="BFDR" />
+          </span>
+          <b>{eur(bfr)}</b>
+          <small>contexte financier</small>
+        </article>
+        <article className={receivables ? 'watch' : ''}>
+          <span>Créances à recouvrer</span>
+          <b>{eur(receivables)}</b>
+          <small>balance âgée clients</small>
+        </article>
+        <article>
+          <span>Dettes à payer</span>
+          <b>{eur(payables)}</b>
+          <small>balance âgée fournisseurs</small>
+        </article>
+        <article>
+          <span>Résultat comptable</span>
+          <b>{eur(result)}</b>
+          <small>exercice courant</small>
+        </article>
+      </section>
+      <div className="accounting-tabs">
+        <button className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>
+          Vue d’ensemble
+        </button>
+        <button className={tab === 'balanceSheet' ? 'active' : ''} onClick={() => setTab('balanceSheet')}>
+          Bilan
+        </button>
+        <button className={tab === 'accounts' ? 'active' : ''} onClick={() => setTab('accounts')}>
+          Balance détaillée
+        </button>
+        <button className={tab === 'entries' ? 'active' : ''} onClick={() => setTab('entries')}>
+          Écritures
+        </button>
+        <button className={tab === 'reconcile' ? 'active' : ''} onClick={() => setTab('reconcile')}>
+          Rapprochements YGPIE1
+        </button>
+      </div>
+      {tab === 'summary' && (
+        <>
+          <section className="treasury-panel accounting-control-panel">
+            <div className="accounting-section-title">
+              <div>
+                <h3>Points de contrôle</h3>
+                <p>Contrôles automatiques sur les comptes sensibles et la qualité comptable.</p>
+              </div>
+              <div className="accounting-control-counts">
+                <span className="alert">{alertCount} alerte(s)</span>
+                <span className="watch">{watchCount} vigilance(s)</span>
+              </div>
+            </div>
+            <div className="accounting-control-grid">
+              {controlCards.map((c) => (
+                <article key={c.title} className={`control-card ${c.level}`}>
+                  <span>{c.title}</span>
+                  <b>{c.value}</b>
+                  <small>{c.detail}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="treasury-panel">
+            <div className="accounting-section-title">
+              <div>
+                <h3>Balance sous surveillance</h3>
+                <p>Les comptes présentant un signal ou une pièce ancienne. Cliquer pour investiguer les écritures.</p>
+              </div>
+              <div className="accounting-watch-filters">
+                <button className={watchFilter === 'all' ? 'active' : ''} onClick={() => setWatchFilter('all')}>
+                  Tous ({watched.length})
+                </button>
+                <button className={watchFilter === 'alert' ? 'active' : ''} onClick={() => setWatchFilter('alert')}>
+                  Alertes ({alertCount})
+                </button>
+                <button className={watchFilter === 'watch' ? 'active' : ''} onClick={() => setWatchFilter('watch')}>
+                  Vigilances ({watchCount})
+                </button>
+              </div>
+            </div>
+            <div className="accounting-table-wrap">
+              <table className="accounting-table">
+                <thead>
+                  <tr>
+                    <th>Compte</th>
+                    <th>Libellé</th>
+                    <th className="num">Solde</th>
+                    <th className="num">Écritures</th>
+                    <th>Dernier mouvement</th>
+                    <th>Motif</th>
+                    <th>Statut</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredWatched.length ? (
+                    filteredWatched.map((a: any) => (
+                      <tr key={a.account} className="accounting-account" onClick={() => open(a)}>
+                        <td>
+                          <b>{a.account}</b>
+                        </td>
+                        <td>{a.label}</td>
+                        <td className="num">{eur(a.balance)}</td>
+                        <td className="num">{a.entryCount}</td>
+                        <td>{dateFr(a.lastDate)}</td>
+                        <td>{a.reason || 'À examiner'}</td>
+                        <td>
+                          <span className={`accounting-status ${a.level}`}>
+                            {a.level === 'alert' ? 'Alerte' : 'Vigilance'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="accounting-empty-row">
+                        Aucun compte sous surveillance avec ce filtre.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section className="treasury-panel">
+            <div className="accounting-section-title">
+              <div>
+                <h3>Sources comptables</h3>
+                <p>Fraîcheur des données utilisées pour cette vue.</p>
+              </div>
+            </div>
+            <div className="accounting-sources">
+              {sources.map((s) => (
+                <article key={s.name} className={s.date ? 'ready' : 'missing'}>
+                  <b>{s.name}</b>
+                  <span>{s.desc}</span>
+                  <small>{s.date ? `Mis à jour : ${frDate(s.date)}` : 'Non alimenté'}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+      {tab === 'balanceSheet' && (
+        <div className="balance-sheet-view">
+          <style>{`.balance-sheet-view{display:grid;gap:14px}.balance-sheet-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.balance-sheet-kpis article{background:#fff;border:1px solid #dfe7ef;border-radius:12px;padding:13px}.balance-sheet-kpis span,.balance-sheet-kpis small{display:block;color:#697d91;font-size:9px}.balance-sheet-kpis b{display:block;margin:6px 0 3px;font-size:20px;color:#173f68}.balance-sheet-kpis .balanced{background:#f2fbf6;border-color:#bfe5cf}.balance-sheet-kpis .balanced b{color:#167755}.balance-sheet-kpis .unbalanced{background:#fff7f2;border-color:#f0c8ad}.balance-sheet-kpis .unbalanced b{color:#b85a31}.balance-sheet-columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.balance-sheet-side{background:#fff;border:1px solid #dfe7ef;border-radius:13px;padding:14px}.balance-sheet-side>header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.balance-sheet-side>header h3{margin:0;font-size:17px}.balance-sheet-side>header strong{font-size:18px;color:#2673d9}.balance-sheet-block{margin-top:10px}.balance-sheet-block-head{display:flex;justify-content:space-between;padding:8px 10px;border-radius:8px;background:#edf5ff;color:#174f8b}.balance-sheet-block.liability .balance-sheet-block-head{background:#eef9f3;color:#167755}.balance-sheet-block table{width:100%;border-collapse:collapse;font-size:10px}.balance-sheet-block th,.balance-sheet-block td{padding:7px 8px;border-bottom:1px solid #edf1f5;text-align:left}.balance-sheet-block th:nth-child(n+3),.balance-sheet-block td.num{text-align:right}.balance-sheet-subtotal{font-weight:800;background:#f7fafc}.balance-sheet-structure{display:grid;grid-template-columns:1fr 1fr;gap:14px}.balance-structure-card{background:#fff;border:1px solid #dfe7ef;border-radius:12px;padding:14px}.balance-structure-bars{display:flex;gap:26px;align-items:flex-end;justify-content:center;height:210px;padding:12px 30px}.balance-structure-column{width:110px;height:170px;display:flex;flex-direction:column;border-radius:8px;overflow:hidden;background:#f2f5f8}.balance-segment{display:flex;align-items:center;justify-content:center;min-height:22px;font-size:10px;font-weight:800}.balance-segment.high.asset{background:#2f80ed;color:#fff}.balance-segment.low.asset{background:#a9cff8;color:#173f68}.balance-segment.high.liability{background:#16965b;color:#fff}.balance-segment.low.liability{background:#a9dfc4;color:#17583c}.balance-structure-label{text-align:center;font-size:10px;font-weight:800;color:#526a82}.balance-class-table{background:#fff;border:1px solid #dfe7ef;border-radius:12px;padding:14px}.balance-class-table table{width:100%;border-collapse:collapse;font-size:10px}.balance-class-table th,.balance-class-table td{padding:8px;border-bottom:1px solid #edf1f5}.balance-class-table th:not(:first-child),.balance-class-table td:not(:first-child){text-align:right}.balance-sheet-note{font-size:9px;color:#74869a;margin:0}.balance-mirror{background:#fff;border:1px solid #dfe7ef;border-radius:13px;padding:14px}.balance-mirror-head{display:grid;grid-template-columns:1fr 1fr;gap:24px}.balance-mirror-head>div{display:flex;justify-content:space-between;align-items:center}.balance-mirror-head h3{margin:0}.balance-mirror-head strong{font-size:18px;color:#2673d9}.balance-mirror-section{margin-top:12px}.balance-mirror-section>h4{margin:0;padding:8px 10px;background:#f0f5fa;color:#173f68;border-radius:8px;font-size:11px}.balance-mirror-subheads{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:5px}.balance-mirror-subheads b{padding:7px 10px;background:#edf5ff;color:#174f8b}.balance-mirror-subheads b+ b{background:#eef9f3;color:#167755}.balance-mirror-row{display:grid;grid-template-columns:1fr 1fr;gap:24px;border-bottom:1px solid #edf1f5}.balance-mirror-row>div{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:8px;align-items:center;min-height:38px;padding:5px 10px}.balance-mirror-row span{font-size:9px;font-weight:800}.balance-mirror-row b{font-size:10px;font-weight:600}.balance-mirror-row strong{font-size:10px;white-space:nowrap}.balance-mirror-total{display:grid;grid-template-columns:1fr auto 1fr auto;gap:10px;margin-top:10px;padding:10px;background:#f4f8fc;border-radius:8px;color:#173f68}.balance-structure-unit{display:flex;align-items:center;gap:8px}.balance-brace-label{display:grid;grid-template-rows:1fr auto 1fr;align-items:center;text-align:center;font-size:9px;font-weight:800;color:#405b76;min-width:72px}.balance-brace-label i{font-style:normal;font-size:18px;line-height:.55;color:#52708d}.balance-explainer{display:grid;grid-template-columns:1fr 1fr;gap:18px;background:#eef7ff;border:1px solid #bcdcff;border-radius:12px;padding:14px;color:#244b70}.balance-explainer h3{margin:0 0 8px}.balance-explainer b{font-size:10px}.balance-explainer p{margin:5px 0 0;font-size:9px;line-height:1.5}.balance-visual-grid{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:12px}.balance-visual-grid>div{background:#fff;border:1px solid #dfe7ef;border-radius:12px;padding:13px;min-width:0}.balance-visual-grid h3{margin:0 0 2px}.balance-structure-bars{display:flex;gap:22px;align-items:flex-end;justify-content:center;height:205px;padding:10px 4px 0}.balance-structure-unit{display:flex;align-items:center;gap:8px}.balance-structure-column{width:78px;height:160px;display:flex;flex-direction:column;border-radius:6px;overflow:hidden;background:#f2f5f8}.balance-segment{display:flex;align-items:center;justify-content:center;min-height:0;font-size:9px;font-weight:800}.balance-segment.high{height:var(--high-ratio)}.balance-segment.low{height:var(--low-ratio)}.balance-segment.high.asset{background:#2f80ed;color:#fff}.balance-segment.low.asset{background:#a9cff8;color:#173f68}.balance-segment.high.liability{background:#16965b;color:#fff}.balance-segment.low.liability{background:#a9dfc4;color:#17583c}.balance-structure-label{text-align:center;font-size:9px;font-weight:800;color:#526a82;margin-top:4px}.balance-bracket{width:102px;height:160px;display:flex;flex-direction:column}.balance-bracket .bracket{position:relative;display:flex;align-items:center;min-height:0;font-size:8px;line-height:1.35;color:#24445f}.balance-bracket .bracket.high{height:var(--high-ratio)}.balance-bracket .bracket.low{height:var(--low-ratio)}.balance-bracket .bracket span{flex:1;text-align:center}.balance-bracket .bracket i{height:100%;width:11px;border-top:2px solid #48739d;border-bottom:2px solid #48739d}.balance-bracket.left .bracket i{border-left:2px solid #48739d;border-radius:8px 0 0 8px}.balance-bracket.right .bracket i{border-right:2px solid #48739d;border-radius:0 8px 8px 0}.balance-bracket .bracket.high i{border-bottom-width:1px}.balance-bracket .bracket.low i{border-top-width:1px}.balance-structure-legend{display:grid;grid-template-columns:1fr 1fr;gap:5px 10px;margin-top:4px;font-size:8px;color:#536a80}.balance-structure-legend span,.balance-donut-legend span{display:flex;align-items:center;gap:5px}.balance-structure-legend i,.balance-donut-legend i{display:inline-block;width:9px;height:9px;border-radius:2px}.asset-high,.d1{background:#2f80ed}.asset-low,.d3{background:#a9cff8}.liability-high,.p1{background:#16965b}.liability-low,.p3{background:#a9dfc4}.d2{background:#65a9f3}.d4{background:#b9c5d1}.p2{background:#58c58b}.balance-donut-layout{display:grid;grid-template-columns:minmax(120px,1fr) minmax(125px,.9fr);align-items:center;gap:12px;min-height:190px}.balance-donut{width:150px;height:150px;border-radius:50%;position:relative;margin:auto}.balance-donut:after{content:"";position:absolute;inset:30px;background:#fff;border-radius:50%}.balance-donut>div{position:absolute;z-index:2;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.balance-donut b{font-size:10px;color:#173f68}.balance-donut span{font-size:8px;color:#63788d}.balance-donut-legend{display:grid;gap:9px;font-size:8px;color:#405970}.balance-donut-legend span{display:grid;grid-template-columns:9px minmax(0,1fr) auto}.balance-donut-legend b{font-size:8px;white-space:nowrap}.balance-explainer{display:grid;grid-template-columns:1fr 1fr;gap:18px;background:#eef7ff;border:1px solid #bcdcff;border-radius:12px;padding:14px;color:#244b70}.balance-explainer h3{margin:0 0 8px}.balance-explainer b{font-size:10px}.balance-explainer p{margin:5px 0 0;font-size:9px;line-height:1.5}@media(max-width:1050px){.balance-visual-grid{grid-template-columns:1fr}.balance-sheet-kpis{grid-template-columns:repeat(2,1fr)}.balance-sheet-columns,.balance-sheet-structure{grid-template-columns:1fr}}`}</style>
+          <section className="balance-sheet-kpis">
+            <article>
+              <span>Total actif</span>
+              <b>{eur(totalAsset)}</b>
+              <small>emplois au bilan</small>
+            </article>
+            <article>
+              <span>Total passif</span>
+              <b>{eur(totalLiability)}</b>
+              <small>ressources au bilan</small>
+            </article>
+            <article>
+              <span>Haut de bilan</span>
+              <b>{eur(highAsset)}</b>
+              <small>{balancePct(highAsset)} de l’actif</small>
+            </article>
+            <article>
+              <span>Bas de bilan</span>
+              <b>{eur(lowAsset)}</b>
+              <small>{balancePct(lowAsset)} de l’actif</small>
+            </article>
+            <article className={Math.abs(balanceGap) < 0.01 ? 'balanced' : 'unbalanced'}>
+              <span>Équilibre du bilan</span>
+              <b>{Math.abs(balanceGap) < 0.01 ? 'Actif = Passif' : eur(balanceGap)}</b>
+              <small>{Math.abs(balanceGap) < 0.01 ? 'Écart : 0 €' : 'Écart à contrôler'}</small>
+            </article>
+          </section>
+          <p className="balance-sheet-note">
+            Vue patrimoniale reconstruite à partir des soldes de la balance importée. Les comptes débiteurs et
+            créditeurs de classes 1 à 5 sont ventilés selon leur sens ; le résultat des classes 6 et 7 est intégré à
+            l’équilibre de l’exercice.
+          </p>
+          <section className="balance-mirror">
+            <div className="balance-mirror-head">
+              <div>
+                <h3>ACTIF</h3>
+                <strong>{eur(totalAsset)}</strong>
+              </div>
+              <div>
+                <h3>PASSIF</h3>
+                <strong>{eur(totalLiability)}</strong>
+              </div>
+            </div>
+            <div className="balance-mirror-section">
+              <h4>HAUT DE BILAN</h4>
+              <div className="balance-mirror-subheads">
+                <b>Actif immobilisé · {eur(highAsset)}</b>
+                <b>Ressources stables · {eur(highLiability)}</b>
+              </div>
+              {[1, 2].map((cls) => {
+                const left =
+                  cls === 1
+                    ? [
+                        ...balanceRows.assetHigh.filter((r: any) => r.code === '1D'),
+                        ...balanceRows.assetHigh.filter((r: any) => r.code === 'R')
+                      ]
+                    : balanceRows.assetHigh.filter((r: any) => r.code === '2' || r.code === '28');
+                const right = cls === 1 ? balanceRows.liabilityHigh : [];
+                const n = Math.max(left.length, right.length, 1);
+                return Array.from({ length: n }, (_, i) => (
+                  <div className="balance-mirror-row" key={`high-${cls}-${i}`}>
+                    <div>
+                      {left[i] && (
+                        <>
+                          <span>{left[i].code}</span>
+                          <b>{left[i].label}</b>
+                          <strong>{eur(left[i].amount)}</strong>
+                        </>
+                      )}
+                    </div>
+                    <div>
+                      {right[i] && (
+                        <>
+                          <span>{right[i].code}</span>
+                          <b>{right[i].label}</b>
+                          <strong>{eur(right[i].amount)}</strong>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ));
+              })}
+            </div>
+            <div className="balance-mirror-section">
+              <h4>BAS DE BILAN</h4>
+              <div className="balance-mirror-subheads">
+                <b>Actif circulant · {eur(lowAsset)}</b>
+                <b>Dettes à court terme · {eur(lowLiability)}</b>
+              </div>
+              {[3, 4, 5].map((cls) => {
+                const left = balanceRows.assetLow.filter((r: any) => String(r.code) === String(cls));
+                const right = balanceRows.liabilityLow.filter((r: any) => String(r.code) === String(cls));
+                const n = Math.max(left.length, right.length, 1);
+                return Array.from({ length: n }, (_, i) => (
+                  <div className="balance-mirror-row" key={`low-${cls}-${i}`}>
+                    <div>
+                      {left[i] && (
+                        <>
+                          <span>{left[i].code}</span>
+                          <b>{left[i].label}</b>
+                          <strong>{eur(left[i].amount)}</strong>
+                        </>
+                      )}
+                    </div>
+                    <div>
+                      {right[i] && (
+                        <>
+                          <span>{right[i].code}</span>
+                          <b>{right[i].label}</b>
+                          <strong>{eur(right[i].amount)}</strong>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ));
+              })}
+            </div>
+            <div className="balance-mirror-total">
+              <b>TOTAL ACTIF</b>
+              <strong>{eur(totalAsset)}</strong>
+              <b>TOTAL PASSIF</b>
+              <strong>{eur(totalLiability)}</strong>
+            </div>
+          </section>
+          <section className="balance-visual-grid">
+            <div className="balance-structure-card">
+              <h3>Structure du bilan</h3>
+              <p className="flow-muted">Répartition de l’actif et du passif (en % du total)</p>
+              <div className="balance-structure-bars">
+                <div
+                  className="balance-structure-unit"
+                  style={
+                    {
+                      '--high-ratio': `${totalAsset ? (highAsset / totalAsset) * 100 : 0}%`,
+                      '--low-ratio': `${totalAsset ? (lowAsset / totalAsset) * 100 : 0}%`
+                    } as React.CSSProperties
+                  }
+                >
+                  <div className="balance-bracket left">
+                    <div className="bracket high">
+                      <span>
+                        Haut de bilan
+                        <br />
+                        <b>{balancePct(highAsset)}</b>
+                        <br />
+                        {eur(highAsset)}
+                      </span>
+                      <i />
+                    </div>
+                    <div className="bracket low">
+                      <span>
+                        Bas de bilan
+                        <br />
+                        <b>{balancePct(lowAsset)}</b>
+                        <br />
+                        {eur(lowAsset)}
+                      </span>
+                      <i />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="balance-structure-column">
+                      <div className="balance-segment high asset">
+                        <b>{balancePct(highAsset)}</b>
+                      </div>
+                      <div className="balance-segment low asset">
+                        <b>{balancePct(lowAsset)}</b>
+                      </div>
+                    </div>
+                    <div className="balance-structure-label">Actif</div>
+                  </div>
+                </div>
+                <div
+                  className="balance-structure-unit"
+                  style={
+                    {
+                      '--high-ratio': `${totalLiability ? (highLiability / totalLiability) * 100 : 0}%`,
+                      '--low-ratio': `${totalLiability ? (lowLiability / totalLiability) * 100 : 0}%`
+                    } as React.CSSProperties
+                  }
+                >
+                  <div>
+                    <div className="balance-structure-column">
+                      <div className="balance-segment high liability">
+                        <b>{balancePct(highLiability)}</b>
+                      </div>
+                      <div className="balance-segment low liability">
+                        <b>{balancePct(lowLiability)}</b>
+                      </div>
+                    </div>
+                    <div className="balance-structure-label">Passif</div>
+                  </div>
+                  <div className="balance-bracket right">
+                    <div className="bracket high">
+                      <i />
+                      <span>
+                        Haut de bilan
+                        <br />
+                        <b>{balancePct(highLiability)}</b>
+                        <br />
+                        {eur(highLiability)}
+                      </span>
+                    </div>
+                    <div className="bracket low">
+                      <i />
+                      <span>
+                        Bas de bilan
+                        <br />
+                        <b>{balancePct(lowLiability)}</b>
+                        <br />
+                        {eur(lowLiability)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="balance-structure-legend">
+                <span>
+                  <i className="asset-high" />
+                  Actif immobilisé
+                </span>
+                <span>
+                  <i className="asset-low" />
+                  Actif circulant
+                </span>
+                <span>
+                  <i className="liability-high" />
+                  Ressources stables
+                </span>
+                <span>
+                  <i className="liability-low" />
+                  Dettes court terme
+                </span>
+              </div>
+            </div>
+            <div className="balance-donut-card">
+              <h3>Répartition par postes (actif)</h3>
+              <p className="flow-muted">Composition nette du total de l’actif</p>
+              <div className="balance-donut-layout">
+                <div
+                  className="balance-donut asset-donut"
+                  style={{ background: conic(assetPosts, totalAsset, ['#2f80ed', '#65a9f3', '#a8cff8', '#b9c5d1']) }}
+                >
+                  <div>
+                    <b>{eur(totalAsset)}</b>
+                    <span>Total actif</span>
+                  </div>
+                </div>
+                <div className="balance-donut-legend">
+                  {assetPosts.map((p) => (
+                    <span key={p.key}>
+                      <i className={p.css} />
+                      {p.label}{' '}
+                      <b>
+                        {totalAsset ? `${((p.amount / totalAsset) * 100).toFixed(1).replace('.', ',')} %` : '0,0 %'}
+                      </b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="balance-donut-card">
+              <h3>Répartition par postes (passif)</h3>
+              <p className="flow-muted">Composition du total du passif</p>
+              <div className="balance-donut-layout">
+                <div
+                  className="balance-donut liability-donut"
+                  style={{ background: conic(liabilityPosts, totalLiability, ['#15965b', '#58c58b', '#b5e7ca']) }}
+                >
+                  <div>
+                    <b>{eur(totalLiability)}</b>
+                    <span>Total passif</span>
+                  </div>
+                </div>
+                <div className="balance-donut-legend">
+                  {liabilityPosts.map((p) => (
+                    <span key={p.key}>
+                      <i className={p.css} />
+                      {p.label}{' '}
+                      <b>
+                        {totalLiability
+                          ? `${((p.amount / totalLiability) * 100).toFixed(1).replace('.', ',')} %`
+                          : '0,0 %'}
+                      </b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+          <section className="balance-explainer">
+            <div>
+              <h3>À propos du haut et du bas de bilan</h3>
+              <b>Au bilan (classes 1 à 5)</b>
+              <p>
+                Le <strong>haut de bilan</strong> regroupe les éléments durables : immobilisations, amortissements,
+                financements, réserves et résultat. Le <strong>bas de bilan</strong> regroupe les éléments du cycle
+                courant : stocks, créances, trésorerie et dettes à court terme.
+              </p>
+            </div>
+            <div>
+              <b>Lien avec le compte de résultat</b>
+              <p>
+                Les classes <strong>6 (charges)</strong> et <strong>7 (produits)</strong> ne constituent pas directement
+                des postes d'actif ou de passif. Elles déterminent le résultat de l'exercice, repris au bilan. La
+                synthèse ci-dessous reste donc centrée sur les classes 1 à 5.
+              </p>
+            </div>
+          </section>
+          <div className="balance-class-table">
+            <h3>Synthèse par classe</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Classe</th>
+                  <th>Solde débiteur</th>
+                  <th>Solde créditeur</th>
+                  <th>Solde net</th>
+                  <th>Nb. comptes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {classRows.map((r) => (
+                  <tr key={r.cls}>
+                    <td>
+                      <b>{r.cls}</b> ·{' '}
+                      {r.cls === 1
+                        ? 'Capitaux'
+                        : r.cls === 2
+                          ? 'Immobilisations'
+                          : r.cls === 3
+                            ? 'Stocks'
+                            : r.cls === 4
+                              ? 'Tiers'
+                              : 'Financiers'}
+                    </td>
+                    <td>{eur(r.debit)}</td>
+                    <td>{eur(r.credit)}</td>
+                    <td>{eur(r.net)}</td>
+                    <td>{r.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {tab === 'accounts' && (
+        <section className="treasury-panel">
+          <h3>Balance interactive</h3>
+          <div className="accounting-table-wrap">
+            <table className="accounting-table">
+              <thead>
+                <tr>
+                  <th>Compte</th>
+                  <th>Libellé</th>
+                  <th className="num">Débit</th>
+                  <th className="num">Crédit</th>
+                  <th className="num">Solde</th>
+                  <th className="num">Écritures</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.accounts.map((a: any) => (
+                  <tr key={a.account} className="accounting-account" onClick={() => open(a)}>
+                    <td>
+                      <b>{a.account}</b>
+                    </td>
+                    <td>{a.label}</td>
+                    <td className="num">{eur(a.debit)}</td>
+                    <td className="num">{eur(a.credit)}</td>
+                    <td className="num">{eur(a.balance)}</td>
+                    <td className="num">{a.entryCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+      {tab === 'entries' && (
+        <section className="treasury-panel">
+          <h3>Explorateur d’écritures</h3>
+          <div className="accounting-filters">
+            <input
+              placeholder="Rechercher compte, libellé, journal…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <input placeholder="Compte / racine" value={account} onChange={(e) => setAccount(e.target.value)} />
+            <select value={age} onChange={(e) => setAge(e.target.value)}>
+              <option value="all">Toute ancienneté</option>
+              <option value="30">≤ 30 jours</option>
+              <option value="60">31–60 jours</option>
+              <option value="90">61–90 jours</option>
+              <option value="old">&gt; 90 jours</option>
+            </select>
+            <button
+              className="ui-soft-action"
+              onClick={() => {
+                setQuery('');
+                setAccount('');
+                setAge('all');
+              }}
+            >
+              Réinitialiser
+            </button>
+          </div>
+          {selected && (
+            <div className="accounting-drawer">
+              <b>
+                {selected.account} — {selected.label}
+              </b>
+              <p>
+                Solde {eur(selected.balance)} · {selected.entryCount} écriture(s) · dernier mouvement{' '}
+                {dateFr(selected.lastDate)}
+              </p>
+            </div>
+          )}
+          <div className="accounting-table-wrap">
+            <table className="accounting-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Journal</th>
+                  <th>Compte</th>
+                  <th>Libellé</th>
+                  <th className="num">Débit</th>
+                  <th className="num">Crédit</th>
+                  <th className="num">Mouvement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((r: any, i: number) => (
+                  <tr key={`${r.periodDate}-${r.account}-${r.journal}-${i}`}>
+                    <td>{dateFr(r.periodDate)}</td>
+                    <td>{r.journal}</td>
+                    <td>
+                      <b>{r.account}</b>
+                    </td>
+                    <td>{r.accountLabel}</td>
+                    <td className="num">{eur(r.debit)}</td>
+                    <td className="num">{eur(r.credit)}</td>
+                    <td className="num">{eur(r.movement)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+      {tab === 'reconcile' && (
+        <section className="treasury-panel">
+          <h3>Rapprochements · YGPIE1</h3>
+          {!data.ygpie1?.available ? (
+            <div className="accounting-note">
+              <b>YGPIE1 non importé.</b> Importer l’export « Pièces non soldées » pour analyser les opérations restant à
+              apurer.
+            </div>
+          ) : (
+            <>
+              <div className="accounting-note">
+                <b>{data.ygpie1.summary.pieceCount} pièce(s) non soldée(s)</b> ·{' '}
+                {eur(data.ygpie1.summary.absoluteBalance)} de soldes à investiguer · source{' '}
+                {data.ygpie1.source.sourceFilename}
+              </div>
+              {data.ygpie1.reconciliation && (
+                <>
+                  <div className="ygpie1-reconcile-grid">
+                    <article className="match">
+                      <span>Rapprochables</span>
+                      <b>{data.ygpie1.reconciliation.summary.pairCount} paire(s)</b>
+                      <small>
+                        {eur(data.ygpie1.reconciliation.summary.pairedAmount)} · même compte, même tiers, soldes opposés
+                      </small>
+                    </article>
+                    <article className="review">
+                      <span>À examiner</span>
+                      <b>{data.ygpie1.reconciliation.summary.reviewTierCount} tiers</b>
+                      <small>
+                        {data.ygpie1.reconciliation.summary.reviewLineCount} ligne(s) · débit et crédit sur le tiers
+                        principal
+                      </small>
+                    </article>
+                    <article className="associated">
+                      <span>Tiers associés 411</span>
+                      <b>{data.ygpie1.reconciliation.summary.associatedTierCount} tiers</b>
+                      <small>
+                        {data.ygpie1.reconciliation.summary.associatedLineCount} ligne(s) · débit et crédit sur un tiers
+                        associé
+                      </small>
+                    </article>
+                  </div>
+                  {data.ygpie1.reconciliation.pairs.length > 0 && (
+                    <>
+                      <h3>Rapprochements proposés</h3>
+                      <div className="accounting-table-wrap">
+                        <table className="accounting-table">
+                          <thead>
+                            <tr>
+                              <th>Compte</th>
+                              <th>Tiers principal</th>
+                              <th>Pièce débit</th>
+                              <th>Pièce crédit</th>
+                              <th className="num">Montant</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {data.ygpie1.reconciliation.pairs.map((p: any, i: number) => (
+                              <tr key={`${p.account}-${p.mainParty}-${i}`}>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="account-link"
+                                    onClick={() => selectYgAccount(String(p.account))}
+                                  >
+                                    {p.account}
+                                  </button>
+                                </td>
+                                <td>{p.mainParty}</td>
+                                <td>{p.debit.piece || '—'}</td>
+                                <td>{p.credit.piece || '—'}</td>
+                                <td className="num">{eur(p.amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                  {data.ygpie1.reconciliation.toReview.length > 0 && (
+                    <>
+                      <h3>Prises en charge à examiner</h3>
+                      <div className="accounting-table-wrap">
+                        <table className="accounting-table">
+                          <thead>
+                            <tr>
+                              <th>Tiers principal</th>
+                              <th className="num">Lignes</th>
+                              <th className="num">Débit</th>
+                              <th className="num">Crédit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {data.ygpie1.reconciliation.toReview.map((g: any) => (
+                              <tr key={g.tier}>
+                                <td>
+                                  <b>{g.tier}</b>
+                                </td>
+                                <td className="num">{g.rows.length}</td>
+                                <td className="num">{eur(g.debit)}</td>
+                                <td className="num">{eur(g.credit)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                  {data.ygpie1.reconciliation.associated411.length > 0 && (
+                    <>
+                      <h3>Prises en charge · tiers associés 411</h3>
+                      <div className="accounting-table-wrap">
+                        <table className="accounting-table">
+                          <thead>
+                            <tr>
+                              <th>Tiers associé</th>
+                              <th className="num">Lignes</th>
+                              <th className="num">Débit</th>
+                              <th className="num">Crédit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {data.ygpie1.reconciliation.associated411.map((g: any) => (
+                              <tr key={g.tier}>
+                                <td>
+                                  <b>{g.tier}</b>
+                                </td>
+                                <td className="num">{g.rows.length}</td>
+                                <td className="num">{eur(g.debit)}</td>
+                                <td className="num">{eur(g.credit)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+              <h3>Ancienneté des pièces non soldées</h3>
+              <div className="accounting-age-grid">
+                <div>
+                  <span>≤ 30 jours</span>
+                  <b>{data.ygpie1.summary.ageBuckets.d30}</b>
+                  <small>{eur(data.ygpie1.summary.ageAmounts.d30)}</small>
+                </div>
+                <div>
+                  <span>31–60 jours</span>
+                  <b>{data.ygpie1.summary.ageBuckets.d60}</b>
+                  <small>{eur(data.ygpie1.summary.ageAmounts.d60)}</small>
+                </div>
+                <div>
+                  <span>61–90 jours</span>
+                  <b>{data.ygpie1.summary.ageBuckets.d90}</b>
+                  <small>{eur(data.ygpie1.summary.ageAmounts.d90)}</small>
+                </div>
+                <div>
+                  <span>&gt; 90 jours</span>
+                  <b>{data.ygpie1.summary.ageBuckets.old}</b>
+                  <small>{eur(data.ygpie1.summary.ageAmounts.old)}</small>
+                </div>
+              </div>
+              <h3>Comptes concernés</h3>
+              <div className="accounting-table-wrap">
+                <table className="accounting-table">
+                  <thead>
+                    <tr>
+                      <th>Compte</th>
+                      <th className="num">Pièces</th>
+                      <th className="num">Solde débit</th>
+                      <th className="num">Solde crédit</th>
+                      <th>Plus ancienne échéance</th>
+                      <th className="num">&gt; 90 j</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.ygpie1.accounts.map((a: any) => (
+                      <tr
+                        key={a.account}
+                        className={`ygpie1-account-row ${ygAccount === String(a.account) ? 'selected' : ''}`}
+                        onClick={() => selectYgAccount(String(a.account))}
+                        title={`Afficher les pièces du compte ${a.account}`}
+                      >
+                        <td>
+                          <b>{a.account}</b>
+                        </td>
+                        <td className="num">{a.pieceCount}</td>
+                        <td className="num">{eur(a.debitBalance)}</td>
+                        <td className="num">{eur(a.creditBalance)}</td>
+                        <td>{dateFr(a.oldestDueDate)}</td>
+                        <td className="num">{eur(a.oldOver90)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div ref={ygPiecesRef} className="ygpie1-pieces-anchor">
+                <div className="ygpie1-pieces-head">
+                  <h3>
+                    Pièces non soldées{' '}
+                    <small>
+                      {ygPieces.length} / {data.ygpie1.pieces.length}
+                    </small>
+                  </h3>
+                  {ygAccount && (
+                    <button type="button" className="ui-soft-action" onClick={() => setYgAccount('')}>
+                      Toutes les pièces
+                    </button>
+                  )}
+                </div>
+                {ygAccount && (
+                  <div className="ygpie1-active-filter">
+                    <div>
+                      <b>Compte {ygAccount}</b>
+                      {ygSelectedAccount && (
+                        <span>
+                          {ygSelectedAccount.pieceCount} pièce(s) · débit {eur(ygSelectedAccount.debitBalance)} · crédit{' '}
+                          {eur(ygSelectedAccount.creditBalance)}
+                        </span>
+                      )}
+                    </div>
+                    <button type="button" className="ui-soft-action" onClick={() => setYgAccount('')}>
+                      × Afficher toutes les pièces
+                    </button>
+                  </div>
+                )}
+                <div className="accounting-table-wrap">
+                  <table className="accounting-table">
+                    <thead>
+                      <tr>
+                        <th>Échéance</th>
+                        <th>Compte</th>
+                        <th>Pièce</th>
+                        <th>Tiers</th>
+                        <th>Libellé</th>
+                        <th className="num">Débit</th>
+                        <th className="num">Crédit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ygPieces.map((r: any) => (
+                        <tr key={`${r.line_no}-${r.piece}`}>
+                          <td>{dateFr(r.dueDate || r.initialDueDate)}</td>
+                          <td>
+                            <b>{r.account}</b>
+                          </td>
+                          <td>{r.piece}</td>
+                          <td>{r.mainParty || r.party || '—'}</td>
+                          <td>{r.label || r.reference || '—'}</td>
+                          <td className="num">{eur(r.debitBalance)}</td>
+                          <td className="num">{eur(r.creditBalance)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+export function AgencyAccountingView({ all, onSelect }: { all: Eple[]; onSelect: (id: string) => void }) {
+  const [details, setDetails] = useState<any[]>([]),
+    [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    Promise.all(
+      all.map(async (e) => {
+        const key = e.opaleEntity || e.uai || e.id;
+        const a = key ? await api.accounting(key).catch(() => null) : null;
+        return { e, a };
+      })
+    )
+      .then((x) => {
+        if (live) setDetails(x);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [all]);
+  const rows = details.map(({ e, a }) => {
+    const signals = (a?.signals || e.signals.filter((s: any) => s.domain === 'Comptabilité générale')) as any[];
+    const yg = a?.ygpie1;
+    const pieces = yg?.available ? Number(yg.summary?.pieceCount || 0) : 0;
+    const ygAmount = yg?.available ? Math.abs(Number(yg.summary?.absoluteBalance || 0)) : 0;
+    const old90 = yg?.available ? Number(yg.summary?.ageBuckets?.old || 0) : 0;
+    const old90Amount = yg?.available ? Math.abs(Number(yg.summary?.ageAmounts?.old || 0)) : 0;
+    const accounts = (a?.accounts || []) as any[];
+    const sigAccounts = [...new Set<string>(signals.map((x: any) => String(x.account || '')).filter(Boolean))];
+    const signalAmount = sigAccounts.reduce(
+      (n: number, acc: string) =>
+        n + Math.abs(Number(accounts.find((x: any) => String(x.account) === acc)?.balance || 0)),
+      0
+    );
+    const amount = Math.max(ygAmount, signalAmount);
+    const oldDates = (yg?.pieces || [])
+      .map((x: any) => daysSince(x.dueDate || x.initialDueDate))
+      .filter((x: any): x is number => typeof x === 'number');
+    const maxAge = oldDates.length ? Math.max(...oldDates) : 0;
+    const level =
+      signals.some((x: any) => x.level === 'alert') || maxAge > 90
+        ? 'alert'
+        : signals.length || maxAge > 30
+          ? 'watch'
+          : 'ok';
+    const family = (acc: string) =>
+      acc.startsWith('47')
+        ? '47'
+        : acc.startsWith('40')
+          ? '40'
+          : acc.startsWith('41')
+            ? '41'
+            : acc.startsWith('46')
+              ? '46'
+              : acc.startsWith('51')
+                ? '51'
+                : 'other';
+    const fam = sigAccounts.reduce((m: Record<string, number>, acc: string) => {
+      const k = family(acc);
+      m[k] = (m[k] || 0) + 1;
+      return m;
+    }, {});
+    return { e, a, signals, pieces, ygAmount, old90, old90Amount, amount, maxAge, level, sigAccounts, fam };
+  });
+  const concerned = rows.filter((r) => r.level !== 'ok'),
+    signalCount = rows.reduce((n, r) => n + r.signals.length, 0),
+    pieces = rows.reduce((n, r) => n + r.pieces, 0),
+    pieceAmount = rows.reduce((n, r) => n + r.ygAmount, 0),
+    old90 = rows.reduce((n, r) => n + r.old90, 0),
+    old90Amount = rows.reduce((n, r) => n + r.old90Amount, 0),
+    sensitive = new Set(rows.flatMap((r) => r.sigAccounts)).size,
+    stale = all.filter((e) => e.staleSources?.includes('balance')).length;
+  const maxAmount = Math.max(...rows.map((r) => r.amount), 1),
+    maxAge = Math.max(...rows.map((r) => r.maxAge), 30),
+    W = 760,
+    H = 300,
+    L = 64,
+    R = 26,
+    T = 22,
+    B = 48,
+    x = (v: number) => L + (v / maxAmount) * (W - L - R),
+    y = (v: number) => T + (1 - v / maxAge) * (H - T - B),
+    compact = (v: number) =>
+      new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
+  const priority = [...rows]
+    .filter((r) => r.level !== 'ok')
+    .sort(
+      (a, b) =>
+        (b.level === 'alert' ? 2 : 1) - (a.level === 'alert' ? 2 : 1) || b.maxAge - a.maxAge || b.amount - a.amount
+    )
+    .slice(0, 6);
+  const heat = rows
+    .filter((r) => Object.values(r.fam).some(Boolean))
+    .sort((a, b) => b.signals.length - a.signals.length);
+  if (loading)
+    return (
+      <div className="page">
+        <div className="loading">Construction de la supervision comptable du groupement…</div>
+      </div>
+    );
+  return (
+    <div className="page fade-in agency-accounting">
+      <div className="financial-head">
+        <div>
+          <span>COMPTABILITÉ GÉNÉRALE · VUE AGENCE</span>
+          <h2>
+            <Database size={24} /> Supervision comptable du groupement
+          </h2>
+          <p>
+            Anomalies, pièces non soldées et comptes sensibles : repérer où intervenir puis descendre jusqu’aux
+            écritures.
+          </p>
+        </div>
+        <div className="agency-scope">
+          <Building2 />
+          <b>{all.length}</b>
+          <small>établissements suivis</small>
+        </div>
+      </div>
+      <section className="accounting-kpis agency-accounting-kpis">
+        <article className={concerned.length ? 'attention' : ''}>
+          <span>EPLE à contrôler</span>
+          <b>
+            {concerned.length} / {all.length}
+          </b>
+          <small>avec au moins un signal</small>
+        </article>
+        <article className={signalCount ? 'attention' : ''}>
+          <span>Anomalies comptables</span>
+          <b>{signalCount}</b>
+          <small>contrôles à réaliser</small>
+        </article>
+        <article>
+          <span>
+            Pièces non soldées <IndicatorInfo id="PIECES_NON_SOLDEES" />
+          </span>
+          <b>{pieces}</b>
+          <small>{eur(pieceAmount)} · YGPIE1</small>
+        </article>
+        <article className={old90 ? 'attention' : ''}>
+          <span>Pièces &gt; 90 jours</span>
+          <b>{old90}</b>
+          <small>{eur(old90Amount)}</small>
+        </article>
+        <article>
+          <span>Comptes sensibles</span>
+          <b>{sensitive}</b>
+          <small>comptes avec un signal</small>
+        </article>
+        <article className={stale ? 'attention' : ''}>
+          <span>Données à actualiser</span>
+          <b>{stale}</b>
+          <small>balances &gt; 30 jours</small>
+        </article>
+      </section>
+      <div className="agency-accounting-top">
+        <section className="treasury-panel">
+          <h3>Positionnement des EPLE</h3>
+          <p className="flow-muted">
+            X = montant concerné · Y = ancienneté maximale · taille = nombre de pièces/signaux · couleur = niveau
+            d’attention.
+          </p>
+          <div className="accounting-agency-scatter">
+            <svg viewBox={`0 0 ${W} ${H}`}>
+              {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+                <g key={`x${t}`}>
+                  <line
+                    x1={L + t * (W - L - R)}
+                    y1={T}
+                    x2={L + t * (W - L - R)}
+                    y2={H - B}
+                    className="accounting-agency-grid"
+                  />
+                  <text x={L + t * (W - L - R)} y={H - 22} textAnchor="middle">
+                    {compact(maxAmount * t)} €
+                  </text>
+                </g>
+              ))}
+              {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+                <g key={`y${t}`}>
+                  <line
+                    x1={L}
+                    y1={T + t * (H - T - B)}
+                    x2={W - R}
+                    y2={T + t * (H - T - B)}
+                    className="accounting-agency-grid"
+                  />
+                  <text x={L - 9} y={T + t * (H - T - B) + 4} textAnchor="end">
+                    {Math.round(maxAge * (1 - t))} j
+                  </text>
+                </g>
+              ))}
+              <line x1={L} y1={H - B} x2={W - R} y2={H - B} className="accounting-agency-axis" />
+              <line x1={L} y1={T} x2={L} y2={H - B} className="accounting-agency-axis" />
+              {rows.map((r) => {
+                const size = Math.min(22, 7 + Math.sqrt(Math.max(r.pieces, r.signals.length, 1)) * 3);
+                return (
+                  <g key={r.e.id} className={`accounting-agency-dot ${r.level}`} onClick={() => onSelect(r.e.id)}>
+                    <title>
+                      {r.e.name} · {eur(r.amount)} · max {r.maxAge} j · {r.pieces || r.signals.length} élément(s)
+                    </title>
+                    <circle cx={x(r.amount)} cy={y(r.maxAge)} r={size} />
+                    <text x={x(r.amount) + size + 5} y={y(r.maxAge) + 3}>
+                      {r.e.name}
+                    </text>
+                  </g>
+                );
+              })}
+              <text x={(L + W - R) / 2} y={H - 3} textAnchor="middle" className="accounting-agency-axis-label">
+                Montant concerné (€)
+              </text>
+              <text
+                transform={`translate(15 ${(T + H - B) / 2}) rotate(-90)`}
+                textAnchor="middle"
+                className="accounting-agency-axis-label"
+              >
+                Ancienneté max (jours)
+              </text>
+            </svg>
+          </div>
+          <div className="accounting-agency-legend">
+            <b>Niveau d’attention</b>
+            <span>
+              <i className="ok" /> Normal
+            </span>
+            <span>
+              <i className="watch" /> À surveiller
+            </span>
+            <span>
+              <i className="alert" /> Élevé
+            </span>
+            <em>Taille = nombre de pièces / signaux</em>
+          </div>
+        </section>
+        <section className="treasury-panel">
+          <h3>Principales situations à contrôler</h3>
+          <div className="agency-alert-table">
+            {priority.length ? (
+              priority.map((r) => (
+                <button key={r.e.id} onClick={() => onSelect(r.e.id)}>
+                  <span className={`agency-dot ${r.level}`} />
+                  <b>{r.e.name}</b>
+                  <span>
+                    {r.old90
+                      ? `${r.old90} pièce(s) > 90 j · ${eur(r.old90Amount)}`
+                      : r.sigAccounts.length
+                        ? `Comptes ${r.sigAccounts.slice(0, 3).join(', ')} · ${eur(r.amount)}`
+                        : `${r.signals.length} signal(aux)`}
+                  </span>
+                  <ChevronRight size={16} />
+                </button>
+              ))
+            ) : (
+              <p className="flow-muted">Aucune situation prioritaire détectée.</p>
+            )}
+          </div>
+        </section>
+      </div>
+      <section className="treasury-panel">
+        <h3>Comptes sensibles par EPLE</h3>
+        <p className="flow-muted">Nombre de comptes présentant au moins un signal.</p>
+        <div className="accounting-table-wrap">
+          <table className="accounting-table accounting-heatmap">
+            <thead>
+              <tr>
+                <th>Établissement</th>
+                <th>47 · Attente</th>
+                <th>40 · Fournisseurs</th>
+                <th>41 · Clients</th>
+                <th>46 · Déb./Créd.</th>
+                <th>51 · Trésorerie</th>
+                <th>Autres</th>
+                <th className="num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {heat.length ? (
+                heat.map((r) => (
+                  <tr key={r.e.id} onClick={() => onSelect(r.e.id)}>
+                    <td>
+                      <b>{r.e.name}</b>
+                    </td>
+                    {['47', '40', '41', '46', '51', 'other'].map((k) => (
+                      <td
+                        key={k}
+                        className={(r.fam[k] || 0) > 1 ? 'heat-alert' : r.fam[k] || 0 ? 'heat-watch' : 'heat-none'}
+                      >
+                        {r.fam[k] || '—'}
+                      </td>
+                    ))}
+                    <td className="num">
+                      <b>{r.signals.length}</b>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={8} className="accounting-empty-row">
+                    Aucun compte sensible détecté.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="treasury-panel">
+        <h3>Détail par établissement</h3>
+        <div className="accounting-table-wrap">
+          <table className="accounting-table">
+            <thead>
+              <tr>
+                <th>Établissement</th>
+                <th>Statut</th>
+                <th className="num">Montant concerné</th>
+                <th className="num">Pièces non soldées</th>
+                <th className="num">&gt; 90 j</th>
+                <th>Principaux signaux</th>
+                <th>Dernière MAJ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...rows]
+                .sort(
+                  (a, b) =>
+                    (b.level === 'alert' ? 2 : b.level === 'watch' ? 1 : 0) -
+                      (a.level === 'alert' ? 2 : a.level === 'watch' ? 1 : 0) || b.amount - a.amount
+                )
+                .map((r) => (
+                  <tr key={r.e.id} className="accounting-agency-row" onClick={() => onSelect(r.e.id)}>
+                    <td>
+                      <b>{r.e.name}</b>
+                      <br />
+                      <small>{r.e.uai || r.e.opaleEntity || ''}</small>
+                    </td>
+                    <td>
+                      <span className={`accounting-status ${r.level === 'ok' ? 'watch' : r.level}`}>
+                        {r.level === 'alert' ? 'Élevé' : r.level === 'watch' ? 'À surveiller' : 'Normal'}
+                      </span>
+                    </td>
+                    <td className="num">{eur(r.amount)}</td>
+                    <td className="num">{r.pieces || '—'}</td>
+                    <td className="num">{r.old90 || '—'}</td>
+                    <td>{r.sigAccounts.slice(0, 4).join(' · ') || 'Aucun signal'}</td>
+                    <td>{dateFr(r.a?.source?.periodTo || r.e.freshness) || '—'}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}

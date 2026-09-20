@@ -1,0 +1,253 @@
+import {
+  AlertTriangle,
+  CalendarDays,
+  Coins,
+  Info,
+  Landmark,
+  ReceiptText,
+  Target,
+  TrendingUp,
+  ChevronRight
+} from 'lucide-react';
+import { eur, pct } from '../lib/format';
+import type { Dashboard, Eple } from '../types/dashboard';
+import { PcifCard } from '../components/PcifCard';
+import { SignalCard } from '../components/SignalCard';
+import { TrajectoryChart } from '../components/TrajectoryChart';
+
+function Kpi({ icon, label, value, hint, delta }: any) {
+  return (
+    <article className="kpi">
+      <div className="kpi-head">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <b>{value}</b>
+      <small>{hint}</small>
+      {delta != null && (
+        <em className={delta < 0 ? 'down' : 'up'}>
+          {delta < 0 ? '↓' : '↑'} {eur(Math.abs(delta))}
+        </em>
+      )}
+    </article>
+  );
+}
+function Row({ n, v, strong }: any) {
+  return (
+    <div className={strong ? 'strong' : ''}>
+      <span>{n}</span>
+      <b>{v}</b>
+    </div>
+  );
+}
+
+function ManagementMarker({
+  current,
+  signals,
+  engagementRate
+}: {
+  current: Eple | null;
+  signals: any[];
+  engagementRate?: number;
+}) {
+  const now = new Date(),
+    month = now.getMonth() + 1,
+    year = now.getFullYear(),
+    start = new Date(year, 0, 1),
+    end = new Date(year + 1, 0, 1);
+  const elapsed = Math.max(
+    0,
+    Math.min(100, Math.round(((now.getTime() - start.getTime()) / (end.getTime() - start.getTime())) * 100))
+  );
+  const phase =
+    month <= 3
+      ? 'Mise en route'
+      : month <= 6
+        ? 'Préparation de la rentrée'
+        : month <= 8
+          ? 'Activité estivale'
+          : month <= 10
+            ? 'Atterrissage'
+            : 'Clôture';
+  const attention = signals.filter((s) => s.level === 'watch' || s.level === 'alert'),
+    alerts = attention.filter((s) => s.level === 'alert').length;
+  return (
+    <article className="panel management-marker">
+      <div className="management-marker-title">
+        <div>
+          <span>
+            REPÈRE DE GESTION ·{' '}
+            {new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(now).toUpperCase()}
+          </span>
+          <h3>
+            <CalendarDays size={18} />
+            {phase}
+          </h3>
+        </div>
+        <small>Contexte calendaire, sans cible normative d'exécution</small>
+      </div>
+      <div className="management-marker-grid">
+        <div>
+          <span>Année écoulée</span>
+          <b>{elapsed} %</b>
+          <small>repère calendaire</small>
+        </div>
+        <div>
+          <span>Engagement budgétaire</span>
+          <b>{engagementRate == null ? '—' : `${Math.round(engagementRate * 100)} %`}</b>
+          <small>{current ? 'constaté sur l’EPLE' : 'vue agence'}</small>
+        </div>
+        <div className={alerts ? 'alert' : attention.length ? 'watch' : 'ok'}>
+          <span>Situations à surveiller</span>
+          <b>{attention.length}</b>
+          <small>{alerts ? `${alerts} alerte${alerts > 1 ? 's' : ''}` : 'signaux Vigie actifs'}</small>
+        </div>
+      </div>
+    </article>
+  );
+}
+export function HomeView({
+  dash,
+  current,
+  openSignal,
+  setOpenSignal,
+  onPcifSync,
+  pcifSyncing
+}: {
+  dash: Dashboard;
+  current: Eple | null;
+  openSignal: string | null;
+  setOpenSignal: (v: string | null) => void;
+  onPcifSync?: (uai: string) => void;
+  pcifSyncing?: boolean;
+}) {
+  const signals = current?.signals || dash.signals || [],
+    m = current?.budgetMetrics,
+    fdr = current?.fdrHistory?.[0],
+    prev = current?.fdrHistory?.[1],
+    agency = !current;
+  const fdrDelta = fdr && prev ? Number(fdr.amount) - Number(prev.amount) : null;
+  const trajectory = signals.some((s) => s.level === 'alert')
+    ? 'Action requise'
+    : signals.some((s) => s.level === 'watch')
+      ? 'À surveiller'
+      : 'Trajectoire maîtrisée';
+  return (
+    <div className="home fade-in">
+      <section className="hero-kpis">
+        <article className={'trajectory ' + (trajectory === 'Action requise' ? 'danger' : '')}>
+          <Target />
+          <span>Trajectoire globale</span>
+          <b>{trajectory}</b>
+          <small>{agency ? 'Lecture consolidée de l’agence' : current.name}</small>
+        </article>
+        <Kpi
+          icon={<Coins />}
+          label={agency ? 'Budget disponible' : 'Trésorerie disponible'}
+          value={agency ? eur(dash.kpis.totalAvailable) : 'À connecter'}
+          hint={agency ? 'Derniers budgets importés' : '5151 + placements à intégrer'}
+        />
+        <Kpi
+          icon={<Landmark />}
+          label="Fonds de roulement"
+          value={fdr ? eur(fdr.amount) : '—'}
+          hint={fdr ? `${fdr.exercise} · ${fdr.is_final ? 'définitif' : 'provisoire'}` : 'FDR non importé'}
+          delta={fdrDelta}
+        />
+        <Kpi
+          icon={<TrendingUp />}
+          label="Résultat prévisionnel"
+          value="À construire"
+          hint="Analyse financière permanente"
+        />
+        <Kpi
+          icon={<ReceiptText />}
+          label="Engagement budgétaire"
+          value={
+            m
+              ? pct(m.engagementRate)
+              : agency && dash.kpis.totalBudget
+                ? pct(Number(dash.kpis.totalCommitted || 0) / Number(dash.kpis.totalBudget))
+                : '—'
+          }
+          hint={m && m.trajectoryTarget ? `Cible à date ≈ ${pct(m.trajectoryTarget)}` : 'Engagé / montant évaluatif'}
+        />
+      </section>
+      <section className="main-grid">
+        <article className="panel execution">
+          <div className="panel-title">
+            <div>
+              <h3>Exécution budgétaire</h3>
+              <p>Engagement réel comparé à la trajectoire EPLE.</p>
+            </div>
+            <span className="pill">Engagement</span>
+          </div>
+          <TrajectoryChart rate={m?.engagementRate} target={m?.trajectoryTarget} />
+          {m ? (
+            <div className="metric-row">
+              <span>
+                <b>{eur(m.budget)}</b> montant évaluatif
+              </span>
+              <span>
+                <b>{eur(m.committed)}</b> engagé
+              </span>
+              <span>
+                <b>{eur(m.accounted)}</b> dont réalisé
+              </span>
+              <span>
+                <b>{eur(m.available)}</b> disponible
+              </span>
+            </div>
+          ) : (
+            <p className="muted">Sélectionne un établissement pour détailler sa trajectoire.</p>
+          )}
+        </article>
+        <article className="panel landing">
+          <div className="panel-title">
+            <div>
+              <h3>Trésorerie et atterrissage</h3>
+              <p>Constaté, engagé, attendu, estimé.</p>
+            </div>
+            <Info size={16} />
+          </div>
+          <div className="landing-list">
+            <Row n="Solde 5151 disponible" v="À connecter" />
+            <Row n="Placements (CAT)" v="À connecter" />
+            <Row n="Encaissements attendus" v="Subventions à intégrer" />
+            <Row n="Décaissements prévus" v="Contrats à intégrer" />
+            <Row n="Trésorerie projetée au 31/12" v="—" strong />
+            <Row n="FDR projeté" v={fdr ? eur(fdr.amount) : '—'} strong />
+          </div>
+          <button className="detail-link">
+            Voir le calcul détaillé de l'atterrissage <ChevronRight size={15} />
+          </button>
+        </article>
+        <article className="panel priorities">
+          <div className="panel-title">
+            <div>
+              <h3>
+                <AlertTriangle size={18} /> Signaux prioritaires
+              </h3>
+              <p>{signals.length} signal(s) sur le périmètre.</p>
+            </div>
+          </div>
+          {signals.slice(0, 6).map((s, i) => {
+            const key = `${s.code}-${i}`;
+            return (
+              <SignalCard
+                key={key}
+                signal={s}
+                open={openSignal === key}
+                onToggle={() => setOpenSignal(openSignal === key ? null : key)}
+              />
+            );
+          })}
+        </article>
+      </section>
+      <section className="lower-grid">
+        <ManagementMarker current={current} signals={signals} engagementRate={m?.engagementRate} />
+        <PcifCard current={current} onSync={onPcifSync} syncing={pcifSyncing} />
+      </section>
+    </div>
+  );
+}

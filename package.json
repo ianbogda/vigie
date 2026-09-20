@@ -1,0 +1,22 @@
+{
+  "name": "vigie-eple",
+  "version": "0.0.70",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm -w apps/api run dev\" \"npm -w apps/web run dev\"",
+    "build": "npm -w apps/api run build && npm -w apps/web run build",
+    "typecheck": "npm -w apps/api run typecheck && npm -w apps/web run typecheck",
+    "test": "npm -w apps/api run test && npm -w apps/web run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "quality": "npm run typecheck && npm run test && npm run format:check"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "prettier": "^3.6.2"
+  }
+}

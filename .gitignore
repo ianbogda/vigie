@@ -1,0 +1,11 @@
+*.diff
+.DS_Store
+*.bak
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+*.dump
+*.sql.gz

@@ -1,0 +1,1097 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Database,
+  ReceiptText,
+  Scale,
+  Search,
+  Table2,
+  Building2
+} from 'lucide-react';
+import { api } from '../lib/api';
+import type { Eple } from '../types/dashboard';
+import { IndicatorInfo } from '../components/IndicatorInfo';
+const eur = (n?: number | null) =>
+  n == null
+    ? '—'
+    : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
+const eur2 = (n?: number | null) =>
+  n == null
+    ? '—'
+    : new Intl.NumberFormat('fr-FR', {
+        style: 'currency',
+        currency: 'EUR',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(n);
+const pct = (n?: number | null) =>
+  n == null ? '—' : new Intl.NumberFormat('fr-FR', { style: 'percent', maximumFractionDigits: 1 }).format(n);
+const Metric = ({ label, value, hint }: { label: ReactNode; value: any; hint?: string }) => (
+  <div className="budget-kpi">
+    <span>{label}</span>
+    <b>{value}</b>
+    {hint && <small>{hint}</small>}
+  </div>
+);
+function Bar({ value, kind = 'dep' }: { value: number; kind?: 'dep' | 'rec' }) {
+  return (
+    <div className={`budget-bar ${kind}`}>
+      <i style={{ width: `${Math.max(0, Math.min(100, value * 100))}%` }} />
+    </div>
+  );
+}
+export function BudgetView({
+  current,
+  all,
+  onSelect
+}: {
+  current: Eple | null;
+  all: Eple[];
+  onSelect: (id: string) => void;
+}) {
+  const [data, setData] = useState<any>(null),
+    [loading, setLoading] = useState(false),
+    [error, setError] = useState(''),
+    [view, setView] = useState<'summary' | 'analysis' | 'structure' | 'source'>('summary'),
+    [tab, setTab] = useState<'DEP' | 'REC'>('DEP'),
+    [open, setOpen] = useState<Set<string>>(new Set(['ALO'])),
+    [query, setQuery] = useState(''),
+    [exercise, setExercise] = useState<number>(new Date().getFullYear());
+  useEffect(() => {
+    setData(null);
+    setError('');
+    if (!current?.opaleEntity) return;
+    setLoading(true);
+    api
+      .budget(current.opaleEntity, exercise)
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [current?.opaleEntity, exercise]);
+  const bs = data?.budgetServices || [];
+  const services = useMemo(
+    () =>
+      bs.map((s: any) => ({
+        code: s.code,
+        label: s.label,
+        section: s.section,
+        ...(tab === 'DEP' ? s.expenses : s.revenues),
+        children: (tab === 'DEP' ? s.expenses : s.revenues).domains || []
+      })),
+    [data, tab]
+  );
+  const sum = tab === 'DEP' ? data?.summary?.expenses : data?.summary?.revenues;
+  if (!current) return <AgencyBudgetView all={all} onSelect={onSelect} />;
+  if (loading) return <div className="page loading">Construction de l’explorateur budgétaire…</div>;
+  if (error)
+    return (
+      <div className="page">
+        <div className="empty-domain">
+          <AlertTriangle />
+          <h2>Budget indisponible</h2>
+          <p>{error}</p>
+        </div>
+      </div>
+    );
+  if (!data?.snapshot)
+    return (
+      <div className="page">
+        <div className="empty-domain">
+          <Database size={34} />
+          <span>BUDGET</span>
+          <h2>Aucune situation budgétaire</h2>
+          <p>Importe l’export Budget Op@le au format .xlsx ou .lis pour {current.name}.</p>
+        </div>
+      </div>
+    );
+  const toggle = (k: string) =>
+    setOpen((v) => {
+      const n = new Set(v);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
+  const exp = data.totals?.expenses || data.summary?.expenses,
+    rev = data.totals?.revenues || data.summary?.revenues,
+    balance = data.totals?.balance ?? (rev?.budget || 0) - (exp?.budget || 0),
+    need = Math.max(0, -balance);
+  const Analysis = () => (
+    <>
+      <section className="budget-kpis">
+        <Metric label={tab === 'DEP' ? 'Dépenses ouvertes' : 'Recettes prévues'} value={eur(sum?.budget)} />
+        <Metric
+          label={
+            tab === 'DEP' ? (
+              <>
+                Engagé <IndicatorInfo id="TAUX_EXEC_DEPENSES" />
+              </>
+            ) : (
+              <>
+                Réalisé <IndicatorInfo id="TAUX_EXEC_RECETTES" />
+              </>
+            )
+          }
+          value={eur(tab === 'DEP' ? sum?.committed : sum?.accounted)}
+          hint={sum?.budget ? pct((tab === 'DEP' ? sum.committed : sum.accounted) / sum.budget) : undefined}
+        />
+        <Metric label="Réalisé comptable" value={eur(sum?.accounted)} />
+        <Metric label="En cours" value={eur(sum?.inProgress)} />
+        <Metric label={tab === 'DEP' ? 'Disponible' : 'Reste à réaliser'} value={eur(sum?.available)} />
+      </section>
+      {data.signals?.length > 0 && tab === 'DEP' && (
+        <section className="budget-attention">
+          <b>
+            <AlertTriangle size={16} /> Points d’attention
+          </b>
+          {data.signals.slice(0, 5).map((s: any) => (
+            <span key={s.service}>
+              <strong>{s.title}</strong> · {s.detail}
+            </span>
+          ))}
+        </section>
+      )}
+      <AnalysisTree services={services} open={open} toggle={toggle} kind={tab === 'DEP' ? 'dep' : 'rec'} />
+    </>
+  );
+  return (
+    <div className="page budget-page">
+      <div className="budget-head financial-head">
+        <div>
+          <span>BUDGET</span>
+          <h2>
+            <ReceiptText /> Budget
+          </h2>
+          <p>Situation budgétaire importée pour l’exercice sélectionné.</p>
+        </div>
+        <label className="flow-exercise">
+          Exercice
+          <select
+            value={data.availableExercises?.includes(exercise) ? exercise : (data.availableExercises?.[0] ?? exercise)}
+            onChange={(e) => setExercise(Number(e.target.value))}
+          >
+            {(data.availableExercises || [new Date(data.snapshot.date).getFullYear()]).map((y: number) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="budget-view-tabs">
+        <button className={view === 'summary' ? 'active' : ''} onClick={() => setView('summary')}>
+          <Scale size={14} />
+          Synthèse
+        </button>
+        <button className={view === 'analysis' ? 'active' : ''} onClick={() => setView('analysis')}>
+          Analyse
+        </button>
+        <button className={view === 'structure' ? 'active' : ''} onClick={() => setView('structure')}>
+          <Table2 size={14} />
+          Structure
+        </button>
+        <button className={view === 'source' ? 'active' : ''} onClick={() => setView('source')}>
+          Données sources
+        </button>
+      </div>
+      {view === 'summary' && (
+        <>
+          <section className="budget-global cards">
+            <div className="dep-card">
+              <span>DÉPENSES BUDGÉTÉES</span>
+              <b>{eur(exp?.budget)}</b>
+              <small>
+                Réalisé : {eur(exp?.accounted)} ({pct(exp?.budget ? exp.accounted / exp.budget : null)})
+              </small>
+              <Bar value={exp?.budget ? exp.accounted / exp.budget : 0} />
+            </div>
+            <div className="rec-card">
+              <span>RECETTES BUDGÉTÉES</span>
+              <b>{eur(rev?.budget)}</b>
+              <small>
+                Réalisé : {eur(rev?.accounted)} ({pct(rev?.budget ? rev.accounted / rev.budget : null)})
+              </small>
+              <Bar kind="rec" value={rev?.budget ? rev.accounted / rev.budget : 0} />
+            </div>
+            <div className="budget-balance">
+              <span>{need > 0 ? 'BESOIN DE FINANCEMENT' : 'SOLDE PRÉVISIONNEL'}</span>
+              <b>{eur(Math.abs(balance))}</b>
+              <small>Recettes − dépenses ({eur(balance)})</small>
+            </div>
+          </section>
+          <section className="service-budget">
+            <div className="service-budget-title">
+              <h3>Répartition par service</h3>
+              <div>
+                <button onClick={() => setOpen(new Set(bs.map((s: any) => s.code)))}>Tout développer</button>
+                <button onClick={() => setOpen(new Set())}>Tout replier</button>
+              </div>
+            </div>
+            <OperatingBudgetSection
+              general={bs.filter((s: any) => s.section === 'OPERATING')}
+              special={bs.filter((s: any) => s.section === 'SPECIAL')}
+              open={open}
+              toggle={toggle}
+            />
+            <BudgetSection
+              title="SECTION D’INVESTISSEMENT"
+              services={bs.filter((s: any) => s.section === 'INVESTMENT')}
+              open={open}
+              toggle={toggle}
+            />
+            <div className="budget-total-row">
+              <b>∑ TOTAL ÉTABLISSEMENT</b>
+              <span>{eur(exp?.budget)}</span>
+              <span>{eur(exp?.accounted)}</span>
+              <span>{pct(exp?.budget ? exp.accounted / exp.budget : null)}</span>
+              <span>{eur(rev?.budget)}</span>
+              <span>{eur(rev?.accounted)}</span>
+              <span>{pct(rev?.budget ? rev.accounted / rev.budget : null)}</span>
+              <em>{eur(balance)}</em>
+            </div>
+          </section>
+        </>
+      )}
+      {view === 'analysis' && (
+        <>
+          <div className="budget-analysis-head">
+            <div>
+              <h3>Analyse détaillée</h3>
+              <p>Une lecture pleine largeur adaptée à la nature de la donnée.</p>
+            </div>
+            <div className="budget-tabs">
+              <button className={tab === 'DEP' ? 'active' : ''} onClick={() => setTab('DEP')}>
+                Dépenses
+              </button>
+              <button className={tab === 'REC' ? 'active' : ''} onClick={() => setTab('REC')}>
+                Recettes
+              </button>
+            </div>
+          </div>
+          <Analysis />
+        </>
+      )}
+      {view === 'structure' && (
+        <>
+          <div className="budget-analysis-head">
+            <div>
+              <h3>Structure budgétaire</h3>
+              <p>Architecture du budget : section → service → sens → domaine → activité.</p>
+            </div>
+          </div>
+          <StructureTree services={bs} open={open} toggle={toggle} />
+        </>
+      )}
+      {view === 'source' && <SourceRows rows={data.sourceRows || []} query={query} setQuery={setQuery} />}
+      <p className="budget-source">
+        Source : {data.snapshot.filename}. Les recettes sont présentées positivement ; les valeurs brutes Op@le restent
+        consultables dans « Données sources ».
+      </p>
+    </div>
+  );
+}
+function AgencyBudgetView({ all, onSelect }: { all: Eple[]; onSelect: (id: string) => void }) {
+  const [rows, setRows] = useState<any[]>([]),
+    [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    Promise.all(
+      all
+        .filter((e) => e.opaleEntity)
+        .map(async (e) => {
+          try {
+            return { e, d: await api.budget(e.opaleEntity!) };
+          } catch {
+            return { e, d: null };
+          }
+        })
+    )
+      .then((x) => {
+        if (alive) setRows(x);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [all]);
+  const usable = rows.filter((r) => r.d?.snapshot);
+  const val = (r: any, side: 'expenses' | 'revenues', key: string) =>
+    Number((r.d.totals?.[side] || r.d.summary?.[side])?.[key] || 0);
+  const total = (side: 'expenses' | 'revenues', key: string) => usable.reduce((a, r) => a + val(r, side, key), 0);
+  const depBudget = total('expenses', 'budget'),
+    depCommitted = total('expenses', 'committed'),
+    depAccounted = total('expenses', 'accounted'),
+    recBudget = total('revenues', 'budget'),
+    recAccounted = total('revenues', 'accounted');
+  const serviceCodes = ['AP', 'VE', 'ALO', 'SRH', 'OPC'];
+  const rate = (r: any, side: 'expenses' | 'revenues') => {
+    const b = val(r, side, 'budget');
+    return b ? val(r, side, 'accounted') / b : null;
+  };
+  const agencyDep = depBudget ? depAccounted / depBudget : null,
+    agencyRec = recBudget ? recAccounted / recBudget : null;
+  const attention = usable
+    .map((r) => {
+      const dr = rate(r, 'expenses'),
+        rr = rate(r, 'revenues'),
+        signals = r.d.signals?.length || 0;
+      const gap = Math.max(
+        dr == null || agencyDep == null ? 0 : Math.abs(dr - agencyDep),
+        rr == null || agencyRec == null ? 0 : Math.abs(rr - agencyRec)
+      );
+      return { ...r, dr, rr, signals, gap };
+    })
+    .filter((r) => r.signals || r.gap >= 0.2)
+    .sort((a, b) => b.signals - a.signals || b.gap - a.gap);
+  if (loading) return <div className="page loading">Agrégation des budgets de l’agence…</div>;
+  return (
+    <div className="page budget-page agency-budget">
+      <div className="budget-head">
+        <div>
+          <span>BUDGET · VUE AGENCE</span>
+          <h2>
+            <Building2 /> Exécution budgétaire du groupement
+          </h2>
+          <p>
+            {usable.length} établissement{usable.length > 1 ? 's' : ''} avec une situation budgétaire exploitable sur{' '}
+            {all.length}.
+          </p>
+        </div>
+      </div>
+      <section className="budget-kpis agency-budget-kpis">
+        <Metric label="Crédits ouverts" value={eur(depBudget)} />
+        <Metric
+          label="Engagements"
+          value={eur(depCommitted)}
+          hint={depBudget ? pct(depCommitted / depBudget) : undefined}
+        />
+        <Metric
+          label={
+            <>
+              Dépenses réalisées <IndicatorInfo id="TAUX_EXEC_DEPENSES" />
+            </>
+          }
+          value={eur(depAccounted)}
+          hint={depBudget ? pct(depAccounted / depBudget) : undefined}
+        />
+        <Metric
+          label={
+            <>
+              Recettes réalisées <IndicatorInfo id="TAUX_EXEC_RECETTES" />
+            </>
+          }
+          value={eur(recAccounted)}
+          hint={recBudget ? pct(recAccounted / recBudget) : undefined}
+        />
+        <Metric label="Situations à examiner" value={attention.length} />
+      </section>
+      <section className="agency-budget-card">
+        <div className="agency-budget-title">
+          <div>
+            <h3>Exécution par établissement</h3>
+            <p>Les taux agence sont pondérés par les montants, et non moyennés entre EPLE.</p>
+          </div>
+          <span>
+            Dépenses {pct(agencyDep)} · Recettes {pct(agencyRec)}
+          </span>
+        </div>
+        <div className="agency-execution-head">
+          <span>Établissement</span>
+          <span>Dépenses</span>
+          <span>Recettes</span>
+        </div>
+        {usable.map((r) => (
+          <button className="agency-execution-row" key={r.e.id} onClick={() => onSelect(r.e.id)}>
+            <strong>{r.e.name}</strong>
+            <span>
+              <b>{pct(rate(r, 'expenses'))}</b>
+              <Bar value={rate(r, 'expenses') || 0} />
+            </span>
+            <span>
+              <b>{pct(rate(r, 'revenues'))}</b>
+              <Bar kind="rec" value={rate(r, 'revenues') || 0} />
+            </span>
+          </button>
+        ))}
+      </section>
+      <section className="agency-budget-card">
+        <div className="agency-budget-title">
+          <div>
+            <h3>Exécution par service</h3>
+            <p>
+              Lecture comparative EPLE × services. Le pourcentage est descriptif : il ne constitue pas à lui seul une
+              anomalie.
+            </p>
+          </div>
+        </div>
+        <div className="agency-heatmap">
+          <div className="agency-heat-head">
+            <span>Établissement</span>
+            {serviceCodes.map((c) => (
+              <b key={c}>{c}</b>
+            ))}
+          </div>
+          {usable.map((r) => (
+            <div className="agency-heat-row" key={r.e.id}>
+              <button onClick={() => onSelect(r.e.id)}>{r.e.name}</button>
+              {serviceCodes.map((c) => {
+                const s = r.d.budgetServices?.find((x: any) => x.code === c),
+                  b = Number(s?.expenses?.budget || 0),
+                  a = Number(s?.expenses?.accounted || 0);
+                return (
+                  <span key={c} className={!b ? 'missing' : ''}>
+                    {b ? pct(a / b) : '—'}
+                  </span>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="agency-budget-card">
+        <div className="agency-budget-title">
+          <div>
+            <h3>Situations à examiner</h3>
+            <p>
+              Écarts significatifs au profil agrégé ou signaux déjà détectés par Vigie. Un écart n’est pas qualifié
+              automatiquement d’anomalie.
+            </p>
+          </div>
+        </div>
+        {attention.length ? (
+          <div className="agency-attention-list">
+            {attention.slice(0, 8).map((r) => (
+              <button key={r.e.id} onClick={() => onSelect(r.e.id)}>
+                <AlertTriangle size={17} />
+                <span>
+                  <strong>{r.e.name}</strong>
+                  <small>
+                    {r.signals
+                      ? `${r.signals} signal${r.signals > 1 ? 'aux' : ''} budgétaire${r.signals > 1 ? 's' : ''}`
+                      : `Écart au profil agence : ${Math.round(r.gap * 100)} points`}
+                  </small>
+                </span>
+                <ChevronRight size={16} />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="budget-source">Aucune situation ne ressort selon les règles actuellement disponibles.</p>
+        )}
+      </section>
+      <section className="agency-budget-card">
+        <div className="agency-budget-title">
+          <div>
+            <h3>Tableau détaillé</h3>
+            <p>Comparaison consolidée des situations importées.</p>
+          </div>
+        </div>
+        <div className="agency-budget-table">
+          <div className="head">
+            <span>EPLE</span>
+            <span>Crédits</span>
+            <span>Engagé</span>
+            <span>Dépenses</span>
+            <span>% DEP</span>
+            <span>Recettes</span>
+            <span>% REC</span>
+          </div>
+          {usable.map((r) => (
+            <button key={r.e.id} onClick={() => onSelect(r.e.id)}>
+              <strong>{r.e.name}</strong>
+              <span>{eur(val(r, 'expenses', 'budget'))}</span>
+              <span>{eur(val(r, 'expenses', 'committed'))}</span>
+              <span>{eur(val(r, 'expenses', 'accounted'))}</span>
+              <span>{pct(rate(r, 'expenses'))}</span>
+              <span>{eur(val(r, 'revenues', 'accounted'))}</span>
+              <span>{pct(rate(r, 'revenues'))}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+      {!usable.length && (
+        <div className="empty-domain">
+          <Database size={34} />
+          <h2>Aucune situation budgétaire exploitable</h2>
+          <p>Importe un budget Op@le pour au moins un établissement de l’agence.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OperatingBudgetSection({
+  general,
+  special,
+  open,
+  toggle
+}: {
+  general: any[];
+  special: any[];
+  open: Set<string>;
+  toggle: (k: string) => void;
+}) {
+  const all = [...general, ...special];
+  if (!all.length) return null;
+  const dep = all.reduce((a, s) => a + s.expenses.budget, 0),
+    rec = all.reduce((a, s) => a + s.revenues.budget, 0),
+    bal = rec - dep;
+  return (
+    <div className="budget-section">
+      <div className="budget-section-head">
+        <b>SECTION DE FONCTIONNEMENT</b>
+        <span>Dépenses : {eur(dep)}</span>
+        <span>Recettes : {eur(rec)}</span>
+        <em>Solde : {eur(bal)}</em>
+      </div>
+      <div className="service-head">
+        <span>Service</span>
+        <b>DÉPENSES</b>
+        <b>RECETTES</b>
+        <b>Solde</b>
+      </div>
+      {general.length > 0 && (
+        <>
+          <div className="budget-subsection-title">SERVICES GÉNÉRAUX</div>
+          {general.map((s) => (
+            <ServiceRow key={s.code} s={s} opened={open.has(s.code)} toggle={() => toggle(s.code)} />
+          ))}
+        </>
+      )}
+      {special.length > 0 && (
+        <>
+          <div className="budget-subsection-title">SERVICES SPÉCIAUX</div>
+          {special.map((s) => (
+            <ServiceRow key={s.code} s={s} opened={open.has(s.code)} toggle={() => toggle(s.code)} />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+function BudgetSection({
+  title,
+  services,
+  open,
+  toggle
+}: {
+  title: string;
+  services: any[];
+  open: Set<string>;
+  toggle: (k: string) => void;
+}) {
+  if (!services.length) return null;
+  const dep = services.reduce((a, s) => a + s.expenses.budget, 0),
+    rec = services.reduce((a, s) => a + s.revenues.budget, 0),
+    bal = rec - dep;
+  return (
+    <div className="budget-section">
+      <div className="budget-section-head">
+        <b>{title}</b>
+        <span>Dépenses : {eur(dep)}</span>
+        <span>Recettes : {eur(rec)}</span>
+        <em>Solde : {eur(bal)}</em>
+      </div>
+      <div className="service-head">
+        <span>Service</span>
+        <b>DÉPENSES</b>
+        <b>RECETTES</b>
+        <b>Solde</b>
+      </div>
+      {services.map((s) => (
+        <ServiceRow key={s.code} s={s} opened={open.has(s.code)} toggle={() => toggle(s.code)} />
+      ))}
+    </div>
+  );
+}
+function SideSummary({ m, kind }: { m: any; kind: 'dep' | 'rec' }) {
+  return (
+    <div className={`side-summary ${kind}`}>
+      <div>
+        <span>{kind === 'dep' ? 'Budget' : 'Prévision'}</span>
+        <b>{eur(m.budget)}</b>
+      </div>
+      <div>
+        <span>Réalisé</span>
+        <b>{eur(m.accounted)}</b>
+      </div>
+      <div>
+        <span>{kind === 'dep' ? 'Disponible' : 'Reste à réaliser'}</span>
+        <b>{eur(m.available)}</b>
+      </div>
+      <div className="rate">
+        <span>Taux</span>
+        <b>{pct(m.rate)}</b>
+        <Bar kind={kind} value={m.rate || 0} />
+      </div>
+    </div>
+  );
+}
+function ServiceRow({ s, opened, toggle }: { s: any; opened: boolean; toggle: () => void }) {
+  return (
+    <div className="service-block">
+      <button className="service-main" onClick={toggle}>
+        <div className="service-name">
+          {opened ? <ChevronDown /> : <ChevronRight />}
+          <span>
+            <b>{s.code}</b>
+            <small>{s.label}</small>
+          </span>
+        </div>
+        <SideSummary m={s.expenses} kind="dep" />
+        <SideSummary m={s.revenues} kind="rec" />
+        <em className={s.balance < 0 ? 'negative' : 'positive'}>{eur(s.balance)}</em>
+      </button>
+      {opened && (
+        <div className="service-detail">
+          <DomainSide title="Dépenses — Répartition par domaine" side={s.expenses} kind="dep" />
+          <DomainSide title="Recettes — Origine des financements" side={s.revenues} kind="rec" />
+        </div>
+      )}
+    </div>
+  );
+}
+function DomainSide({ title, side, kind }: { title: string; side: any; kind: 'dep' | 'rec' }) {
+  return (
+    <div className={`domain-side ${kind}`}>
+      <div className="domain-title">{title}</div>
+      <div className="domain-head">
+        <span>Domaine / activité</span>
+        <span>{kind === 'dep' ? 'Budget' : 'Prévision'}</span>
+        <span>Réalisé</span>
+        <span>{kind === 'dep' ? 'Disponible' : 'Reste'}</span>
+        <span>Taux</span>
+      </div>
+      {(side.domains || []).map((d: any) => (
+        <div className="domain-line" key={d.code}>
+          <span>
+            <b>{d.code}</b>
+            <small>{d.label}</small>
+          </span>
+          <span>{eur(d.budget)}</span>
+          <span>{eur(d.accounted)}</span>
+          <span>{eur(d.available)}</span>
+          <span>{pct(d.rate)}</span>
+        </div>
+      ))}
+      {!side.domains?.length && <div className="domain-empty">Aucune donnée</div>}
+    </div>
+  );
+}
+function BudgetTree({ services, open, toggle }: { services: any[]; open: Set<string>; toggle: (k: string) => void }) {
+  return (
+    <section className="budget-table-wrap">
+      <div className="budget-table-head">
+        <div>Service / domaine / activité</div>
+        <div>Budget</div>
+        <div>Engagé</div>
+        <div>Réalisé</div>
+        <div>En cours</div>
+        <div>Disponible</div>
+        <div>Exécution</div>
+      </div>
+      {services.map((s: any) => {
+        const k = s.code,
+          o = open.has(k);
+        return (
+          <div className="budget-group" key={k}>
+            <button className="budget-row service" onClick={() => toggle(k)}>
+              <div>
+                {o ? <ChevronDown /> : <ChevronRight />}
+                <span>
+                  <b>{s.code}</b>
+                  <small>{s.label}</small>
+                </span>
+              </div>
+              <span>{eur(s.budget)}</span>
+              <span>{eur(s.committed)}</span>
+              <span>{eur(s.accounted)}</span>
+              <span>{eur(s.inProgress)}</span>
+              <span>{eur(s.available)}</span>
+              <span>
+                <b>{pct(s.rate)}</b>
+                <Bar value={s.rate || 0} />
+              </span>
+            </button>
+            {o &&
+              s.children.map((c: any) => {
+                const ck = `${k}/${c.code}`,
+                  co = open.has(ck);
+                return (
+                  <div key={ck}>
+                    <button className="budget-row domain" onClick={() => toggle(ck)}>
+                      <div>
+                        {co ? <ChevronDown /> : <ChevronRight />}
+                        <span>
+                          <b>{c.code}</b>
+                          <small>{c.label}</small>
+                        </span>
+                      </div>
+                      <span>{eur(c.budget)}</span>
+                      <span>{eur(c.committed)}</span>
+                      <span>{eur(c.accounted)}</span>
+                      <span>{eur(c.inProgress)}</span>
+                      <span>{eur(c.available)}</span>
+                      <span>{c.budget ? pct(c.committed / c.budget) : '—'}</span>
+                    </button>
+                    {co &&
+                      c.activities.map((a: any) => (
+                        <div className="budget-row activity" key={`${ck}/${a.code}`}>
+                          <div>
+                            <i />
+                            {a.code}
+                          </div>
+                          <span>{eur(a.budget)}</span>
+                          <span>{eur(a.committed)}</span>
+                          <span>{eur(a.accounted)}</span>
+                          <span>{eur(a.inProgress)}</span>
+                          <span>{eur(a.available)}</span>
+                          <span>{a.budget ? pct(a.committed / a.budget) : '—'}</span>
+                        </div>
+                      ))}
+                  </div>
+                );
+              })}
+          </div>
+        );
+      })}
+      {!services.length && <div className="budget-empty">Aucune ligne identifiée dans cette situation.</div>}
+    </section>
+  );
+}
+function AnalysisTree({
+  services,
+  open,
+  toggle,
+  kind
+}: {
+  services: any[];
+  open: Set<string>;
+  toggle: (k: string) => void;
+  kind: 'dep' | 'rec';
+}) {
+  const groups = [
+    {
+      key: 'operating-general',
+      title: 'SECTION DE FONCTIONNEMENT',
+      subtitle: 'SERVICES GÉNÉRAUX',
+      items: services.filter((s: any) => s.section === 'OPERATING')
+    },
+    {
+      key: 'operating-special',
+      title: 'SECTION DE FONCTIONNEMENT',
+      subtitle: 'SERVICES SPÉCIAUX',
+      items: services.filter((s: any) => s.section === 'SPECIAL')
+    },
+    {
+      key: 'investment',
+      title: 'SECTION D’INVESTISSEMENT',
+      subtitle: null,
+      items: services.filter((s: any) => s.section === 'INVESTMENT')
+    }
+  ];
+  return (
+    <div className="analysis-sections">
+      {groups.map((g, i) => {
+        if (!g.items.length) return null;
+        const showSection = i === 0 || g.title !== groups[i - 1]?.title;
+        return (
+          <section className="analysis-section" key={g.key}>
+            {showSection && <div className="analysis-section-title">{g.title}</div>}
+            {g.subtitle && <div className="analysis-subsection-title">{g.subtitle}</div>}
+            <AnalysisRows services={g.items} open={open} toggle={toggle} kind={kind} />
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+function AnalysisRows({
+  services,
+  open,
+  toggle,
+  kind
+}: {
+  services: any[];
+  open: Set<string>;
+  toggle: (k: string) => void;
+  kind: 'dep' | 'rec';
+}) {
+  return (
+    <div className={`budget-table-wrap analysis-table ${kind}`}>
+      <div className="budget-table-head">
+        <div>Service / domaine / activité</div>
+        <div>{kind === 'dep' ? 'Budget' : 'Prévision'}</div>
+        {kind === 'dep' && <div>Engagé</div>}
+        <div>Réalisé</div>
+        <div>En cours</div>
+        <div>{kind === 'dep' ? 'Disponible' : 'Reste à réaliser'}</div>
+        <div>Exécution</div>
+      </div>
+      {services.map((s: any) => {
+        const k = `analysis/${kind}/${s.code}`,
+          o = open.has(k),
+          rate = s.budget > 0 ? s.accounted / s.budget : null;
+        return (
+          <div className="budget-group" key={k}>
+            <button className="budget-row service" onClick={() => toggle(k)}>
+              <div>
+                {o ? <ChevronDown /> : <ChevronRight />}
+                <span>
+                  <b>{s.code}</b>
+                  <small>{s.label}</small>
+                </span>
+              </div>
+              <span>{eur(s.budget)}</span>
+              {kind === 'dep' && <span>{eur(s.committed)}</span>}
+              <span>{eur(s.accounted)}</span>
+              <span>{eur(s.inProgress)}</span>
+              <span>{eur(s.available)}</span>
+              <span>
+                <b>{pct(rate)}</b>
+                <Bar kind={kind} value={rate || 0} />
+              </span>
+            </button>
+            {o &&
+              (s.children || []).map((c: any) => {
+                const ck = `${k}/${c.code}`,
+                  co = open.has(ck),
+                  cr = c.budget > 0 ? c.accounted / c.budget : null;
+                return (
+                  <div key={ck}>
+                    <button className="budget-row domain" onClick={() => toggle(ck)}>
+                      <div>
+                        {co ? <ChevronDown /> : <ChevronRight />}
+                        <span>
+                          <b>{c.code}</b>
+                          <small>{c.label}</small>
+                        </span>
+                      </div>
+                      <span>{eur(c.budget)}</span>
+                      {kind === 'dep' && <span>{eur(c.committed)}</span>}
+                      <span>{eur(c.accounted)}</span>
+                      <span>{eur(c.inProgress)}</span>
+                      <span>{eur(c.available)}</span>
+                      <span>{pct(cr)}</span>
+                    </button>
+                    {co &&
+                      (c.activities || []).map((a: any) => {
+                        const ar = a.budget > 0 ? a.accounted / a.budget : null;
+                        return (
+                          <div className="budget-row activity" key={`${ck}/${a.code}`}>
+                            <div>
+                              <i />
+                              {a.code}
+                            </div>
+                            <span>{eur(a.budget)}</span>
+                            {kind === 'dep' && <span>{eur(a.committed)}</span>}
+                            <span>{eur(a.accounted)}</span>
+                            <span>{eur(a.inProgress)}</span>
+                            <span>{eur(a.available)}</span>
+                            <span>{pct(ar)}</span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                );
+              })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function StructureTree({
+  services,
+  open,
+  toggle
+}: {
+  services: any[];
+  open: Set<string>;
+  toggle: (k: string) => void;
+}) {
+  const general = services.filter((s: any) => s.section === 'OPERATING'),
+    special = services.filter((s: any) => s.section === 'SPECIAL'),
+    investment = services.filter((s: any) => s.section === 'INVESTMENT');
+  return (
+    <section className="structure-tree">
+      <StructureSection
+        title="SECTION DE FONCTIONNEMENT"
+        groups={[
+          ['SERVICES GÉNÉRAUX', general],
+          ['SERVICES SPÉCIAUX', special]
+        ]}
+        open={open}
+        toggle={toggle}
+      />
+      <StructureSection title="SECTION D’INVESTISSEMENT" groups={[[null, investment]]} open={open} toggle={toggle} />
+    </section>
+  );
+}
+function StructureSection({
+  title,
+  groups,
+  open,
+  toggle
+}: {
+  title: string;
+  groups: [string | null, any[]][];
+  open: Set<string>;
+  toggle: (k: string) => void;
+}) {
+  const has = groups.some(([, xs]) => xs.length);
+  if (!has) return null;
+  return (
+    <div className="structure-section">
+      <div className="structure-section-title">{title}</div>
+      {groups.map(([label, xs], idx) =>
+        xs.length ? (
+          <div className="structure-group" key={label || idx}>
+            {label && <div className="structure-group-title">{label}</div>}
+            {xs.map((s: any) => (
+              <StructureService key={s.code} s={s} open={open} toggle={toggle} />
+            ))}
+          </div>
+        ) : null
+      )}
+    </div>
+  );
+}
+function StructureService({ s, open, toggle }: { s: any; open: Set<string>; toggle: (k: string) => void }) {
+  const sk = `structure/${s.code}`,
+    so = open.has(sk),
+    dep = s.expenses?.budget || 0,
+    rec = s.revenues?.budget || 0,
+    balance = rec - dep;
+  return (
+    <div className="structure-service">
+      <button className="structure-node service" onClick={() => toggle(sk)}>
+        {so ? <ChevronDown /> : <ChevronRight />}
+        <b>{s.code}</b>
+        <span>{s.label}</span>
+        <em className={balance < 0 ? 'negative' : balance > 0 ? 'positive' : 'neutral'}>
+          <small>Solde</small>
+          {eur(balance)}
+        </em>
+      </button>
+      {so && (
+        <div className="structure-sides">
+          <StructureSide
+            title="Dépenses"
+            side={s.expenses}
+            kind="dep"
+            prefix={`${sk}/dep`}
+            open={open}
+            toggle={toggle}
+          />
+          <StructureSide
+            title="Recettes"
+            side={s.revenues}
+            kind="rec"
+            prefix={`${sk}/rec`}
+            open={open}
+            toggle={toggle}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+function StructureSide({
+  title,
+  side,
+  kind,
+  prefix,
+  open,
+  toggle
+}: {
+  title: string;
+  side: any;
+  kind: 'dep' | 'rec';
+  prefix: string;
+  open: Set<string>;
+  toggle: (k: string) => void;
+}) {
+  return (
+    <div className={`structure-side ${kind}`}>
+      <div className="structure-side-title">
+        <b>{title}</b>
+        <span>{eur(side.budget)}</span>
+      </div>
+      {(side.domains || []).map((d: any) => {
+        const dk = `${prefix}/${d.code}`,
+          opened = open.has(dk);
+        return (
+          <div key={dk}>
+            <button className="structure-node domain" onClick={() => toggle(dk)}>
+              {opened ? <ChevronDown /> : <ChevronRight />}
+              <b>{d.code}</b>
+              <span>{d.label}</span>
+              <em>{eur(d.budget)}</em>
+            </button>
+            {opened &&
+              (d.activities || []).map((a: any) => (
+                <div className="structure-node activity" key={`${dk}/${a.code}`}>
+                  <i />
+                  <b>{a.code}</b>
+                  <span>{a.label}</span>
+                  <em>{eur(a.budget)}</em>
+                </div>
+              ))}
+          </div>
+        );
+      })}
+      {!side.domains?.length && <div className="domain-empty">Aucune ligne</div>}
+    </div>
+  );
+}
+function SourceRows({ rows, query, setQuery }: { rows: any[]; query: string; setQuery: (v: string) => void }) {
+  const q = query.trim().toLowerCase(),
+    filtered = q ? rows.filter((r: any) => JSON.stringify(r).toLowerCase().includes(q)) : rows;
+  return (
+    <section className="budget-source-view">
+      <div className="source-toolbar">
+        <div>
+          <h3>Données sources Op@le</h3>
+          <p>Valeurs brutes importées, signes Op@le conservés.</p>
+        </div>
+        <label>
+          <Search size={14} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Compte, CGR, poste…" />
+        </label>
+      </div>
+      <div className="source-table">
+        <div className="source-row head">
+          <span>Ligne</span>
+          <span>Sens</span>
+          <span>CGR</span>
+          <span>Compte</span>
+          <span>Budget brut</span>
+          <span>Réalisé brut</span>
+        </div>
+        {filtered.slice(0, 500).map((r: any) => (
+          <div className="source-row" key={r.lineNo}>
+            <span>{r.lineNo}</span>
+            <span>{r.direction}</span>
+            <span>
+              {r.cgr
+                ?.map((x: any) => x.code)
+                .filter(Boolean)
+                .join(' › ')}
+            </span>
+            <span>{r.account || '—'}</span>
+            <span>{eur2(r.budget)}</span>
+            <span>{eur2(r.accounted)}</span>
+          </div>
+        ))}
+      </div>
+      {filtered.length > 500 && (
+        <p className="budget-source">500 lignes affichées sur {filtered.length}. Utilise la recherche pour affiner.</p>
+      )}
+    </section>
+  );
+}
