@@ -1,157 +1,157 @@
 diff --git a/apps/api/src/modules/dashboard.routes.ts b/apps/api/src/modules/dashboard.routes.ts
 --- a/apps/api/src/modules/dashboard.routes.ts
 +++ b/apps/api/src/modules/dashboard.routes.ts
-@@ -393,2 +393,130 @@
-+        }
-+
-+        // Trajectoire DEP : YCONSDEP est la source fonctionnelle prioritaire.
-+        // Si l'historique YCONSDEP de l'exercice ne contient qu'une situation,
-+        // les écritures de classe 6 reconstituent uniquement la chronologie passée.
-+        const depHistory = (
-+          await pool.query(
-+            `select fs.id,
-+                    fs.snapshot_date,
-+                    coalesce(fs.exercise, extract(year from fs.snapshot_date)::int) exercise,
-+                    coalesce(sum(fel.budget),0) budget,
-+                    coalesce(sum(fel.committed),0) committed,
-+                    coalesce(sum(fel.accounted),0) accounted
-+             from financial_snapshots fs
-+             join financial_execution_lines fel on fel.snapshot_id=fs.id
-+             where upper(fs.opale_entity)=upper($1)
-+               and fs.source_type='YCONSDEP'
-+             group by fs.id,fs.snapshot_date,fs.exercise
-+             order by exercise,fs.snapshot_date,fs.id`,
-+            [e.opaleEntity || e.sources.budget.source_key]
-+          )
-+        ).rows.map((row: any) => ({
-+          date: row.snapshot_date instanceof Date ? row.snapshot_date.toISOString().slice(0, 10) : String(row.snapshot_date).slice(0, 10),
-+          exercise: Number(row.exercise),
-+          budget: Number(row.budget || 0),
-+          committed: Number(row.committed || 0),
-+          accounted: Math.abs(Number(row.accounted || 0))
-+        }));
-+
-+        if (depHistory.length) {
-+          const trajectoryExercise = Math.max(...depHistory.map((row: any) => row.exercise));
-+          const monthlyLatest = (exercise: number) => {
-+            const months = new Map<number, { date: string; month: number; value: number }>();
-+            for (const row of depHistory.filter((item: any) => item.exercise === exercise)) {
-+              const date = new Date(`${row.date}T12:00:00`);
-+              if (Number.isNaN(date.getTime())) continue;
-+              const month = date.getMonth() + 1;
-+              const previous = months.get(month);
-+              if (!previous || row.date > previous.date) months.set(month, { date: row.date, month, value: row.accounted });
-+            }
-+            return [...months.values()].sort((a, b) => a.month - b.month);
-+          };
-+
-+          let actual = monthlyLatest(trajectoryExercise);
-+          let actualSource: 'YCONSDEP' | 'ACCOUNTING_LINES' = 'YCONSDEP';
-+
-+          if (actual.length < 2) {
-+            const accountingRows = (
+@@ -329,48 +329,108 @@
+-          // Courbe d'accueil : résultat réalisé cumulé observé dans chaque situation
+-          // budgétaire historisée, comparé aux exercices précédents et à la référence
+-          // budgétaire. Les scénarios d'atterrissage prolongent uniquement le dernier
+-          // constat jusqu'au 31/12 ; aucun point mensuel fictif n'est créé.
+-          const snapshotYear = new Date(`${e.sources.budget.snapshot_date}T12:00:00`).getFullYear();
+-          const historyRows = (
++          // Trajectoire DEP : CLCA fournit la chronologie ; YCONSDEP ancre la
++          // situation budgétaire à date et l'atterrissage. Un YCONSDEP reste une
++          // photographie : il n'est jamais utilisé pour fabriquer l'historique.
++          const depSnapshot = (
+             await pool.query(
+-              `select bs.id,bs.snapshot_date,bl.raw_dimensions,bl.budget,bl.accounted
+-               from budget_snapshots bs
+-               join budget_lines bl on bl.snapshot_id=bs.id
+-               where coalesce(nullif(bs.opale_entity,''),bs.establishment_name)=$1
+-                 and extract(year from bs.snapshot_date) between $2 and $3
+-               order by bs.snapshot_date,bs.id`,
+-              [e.sources.budget.source_key, snapshotYear - 2, snapshotYear]
++              `select fs.id,fs.snapshot_date,fs.exercise
++               from financial_snapshots fs
++               where upper(fs.opale_entity)=upper($1)
++                 and fs.source_type='YCONSDEP'
++               order by coalesce(fs.exercise,extract(year from fs.snapshot_date)::int) desc,
++                        fs.snapshot_date desc,fs.created_at desc
++               limit 1`,
++              [e.opaleEntity || e.sources.budget.source_key]
+             )
+-          ).rows;
+-          const snapshots = new Map<string, { date: string; budgetDep: number; budgetRec: number; actualDep: number; actualRec: number }>();
+-          for (const row of historyRows) {
+-            const key = `${row.id}:${row.snapshot_date}`;
+-            const point = snapshots.get(key) || { date: String(row.snapshot_date).slice(0, 10), budgetDep: 0, budgetRec: 0, actualDep: 0, actualRec: 0 };
+-            const direction = side(row);
+-            if (direction === 'DEP') { point.budgetDep += Math.abs(Number(row.budget || 0)); point.actualDep += Math.abs(Number(row.accounted || 0)); }
+-            if (direction === 'REC') { point.budgetRec += Math.abs(Number(row.budget || 0)); point.actualRec += Math.abs(Number(row.accounted || 0)); }
+-            snapshots.set(key, point);
++          ).rows[0] || null;
++          if (depSnapshot) {
++            const depExecution = (
 +              await pool.query(
-+                `select date_trunc('month',period_date)::date month_date,
-+                        coalesce(sum(movement),0) movement
-+                 from accounting_lines
-+                 where upper(opale_entity)=upper($1)
-+                   and extract(year from period_date)=$2
-+                   and account ~ '^6'
-+                   and coalesce(movement_kind,'') <> 'OPENING'
-+                 group by date_trunc('month',period_date)
-+                 order by month_date`,
-+                [e.opaleEntity || e.sources.budget.source_key, trajectoryExercise]
++                `select coalesce(sum(budget),0) budget,
++                        coalesce(sum(committed),0) committed,
++                        coalesce(sum(accounted),0) accounted
++                 from financial_execution_lines
++                 where snapshot_id=$1`,
++                [depSnapshot.id]
 +              )
-+            ).rows;
-+            if (accountingRows.length > 1) {
-+              let cumulative = 0;
-+              actual = accountingRows.map((row: any) => {
-+                cumulative += Number(row.movement || 0);
-+                const date = row.month_date instanceof Date ? row.month_date.toISOString().slice(0, 10) : String(row.month_date).slice(0, 10);
-+                const parsed = new Date(`${date}T12:00:00`);
-+                return { date, month: parsed.getMonth() + 1, value: Math.abs(cumulative) };
-+              });
-+              actualSource = 'ACCOUNTING_LINES';
-+            }
-+          }
++            ).rows[0];
++            const snapshotDate =
++              depSnapshot.snapshot_date instanceof Date
++                ? depSnapshot.snapshot_date.toISOString().slice(0, 10)
++                : String(depSnapshot.snapshot_date).slice(0, 10);
++            const snapshotYear =
++              Number(depSnapshot.exercise) || new Date(`${snapshotDate}T12:00:00`).getFullYear();
++            const depBudget = Math.abs(Number(depExecution.budget || 0));
++            const depAccounted = Math.abs(Number(depExecution.accounted || 0));
++            const depCommitted = Math.abs(Number(depExecution.committed || 0));
 +
-+          let previous = monthlyLatest(trajectoryExercise - 1);
-+          if (previous.length < 2) {
-+            const previousRows = (
-+              await pool.query(
-+                `select date_trunc('month',period_date)::date month_date,
-+                        coalesce(sum(movement),0) movement
-+                 from accounting_lines
-+                 where upper(opale_entity)=upper($1)
-+                   and extract(year from period_date)=$2
-+                   and account ~ '^6'
-+                   and coalesce(movement_kind,'') <> 'OPENING'
-+                 group by date_trunc('month',period_date)
-+                 order by month_date`,
-+                [e.opaleEntity || e.sources.budget.source_key, trajectoryExercise - 1]
-+              )
-+            ).rows;
-+            let cumulative = 0;
-+            if (previousRows.length > 1) {
-+              previous = previousRows.map((row: any) => {
-+                cumulative += Number(row.movement || 0);
-+                const date = row.month_date instanceof Date ? row.month_date.toISOString().slice(0, 10) : String(row.month_date).slice(0, 10);
-+                const parsed = new Date(`${date}T12:00:00`);
-+                return { date, month: parsed.getMonth() + 1, value: Math.abs(cumulative) };
-+              });
-+            }
-+          }
++            const keys = [e.opaleEntity, e.uai, e.name, e.sources.purchases?.establishment_name]
++              .filter(Boolean)
++              .map((value: any) => String(value).trim().toUpperCase());
++            const clcaRows = keys.length
++              ? (
++                  await pool.query(
++                    `select extract(year from pl.order_date)::int exercise,
++                            extract(month from pl.order_date)::int month,
++                            coalesce(sum(case when coalesce(pl.invoice_amount,0)>=0
++                                              then abs(coalesce(pl.invoice_amount,0)) else 0 end),0) expenses
++                     from purchase_lines pl
++                     join purchase_snapshots ps on ps.id=pl.snapshot_id
++                     where pl.order_date is not null
++                       and (upper(coalesce(pl.establishment,''))=any($1::text[])
++                            or upper(coalesce(ps.establishment_name,''))=any($1::text[]))
++                       and extract(year from pl.order_date) between $2 and $3
++                     group by 1,2
++                     order by 1,2`,
++                    [keys, snapshotYear - 1, snapshotYear]
++                  )
++                ).rows
++              : [];
 +
-+          const latestDep = depHistory.filter((row: any) => row.exercise === trajectoryExercise).at(-1)!;
-+          const trajectoryTarget = Math.max(0.15, Math.min(0.98, budgetTrajectoryTarget(latestDep.date)));
-+          const known = Math.max(latestDep.accounted, latestDep.committed);
-+          const pace = latestDep.accounted / trajectoryTarget;
-+          const central = Math.min(latestDep.budget || Number.POSITIVE_INFINITY, Math.max(known, pace));
-+          const uncertainty = Math.max(0, central - latestDep.accounted) * 0.18;
-+          const depForecast = {
-+            low: Math.max(known, central - uncertainty),
-+            central,
-+            high: central + uncertainty
-+          };
-+          const budgetReference = Array.from({ length: 12 }, (_, index) => {
-+            const month = index + 1;
-+            const date = `${trajectoryExercise}-${String(month).padStart(2, '0')}-${String(new Date(trajectoryExercise, month, 0).getDate()).padStart(2, '0')}`;
-+            return { date, month, value: latestDep.budget * budgetTrajectoryTarget(date) };
-+          });
++            const cumulative = (exercise: number) => {
++              let total = 0;
++              return clcaRows
++                .filter((row: any) => Number(row.exercise) === exercise)
++                .sort((a: any, b: any) => Number(a.month) - Number(b.month))
++                .map((row: any) => {
++                  total += Number(row.expenses || 0);
++                  const month = Number(row.month);
++                  const date = `${exercise}-${String(month).padStart(2, '0')}-${String(new Date(exercise, month, 0).getDate()).padStart(2, '0')}`;
++                  return { date, month, value: total };
++                });
++            };
 +
-+          e.financialTrajectory = {
-+            mode: 'DEP',
-+            source: actualSource,
-+            exercise: trajectoryExercise,
-+            snapshotDate: latestDep.date,
-+            actual,
-+            previous: previous.length ? { [String(trajectoryExercise - 1)]: previous } : {},
-+            budgetReference,
-+            forecast: depForecast,
-+            annualBudgetResult: latestDep.budget
-+          };
-         }
-         states.budget = severity(e.signals.filter((x: any) => x.domain === 'Budget'));
-diff --git a/apps/web/src/types/dashboard.ts b/apps/web/src/types/dashboard.ts
---- a/apps/web/src/types/dashboard.ts
-+++ b/apps/web/src/types/dashboard.ts
-@@ -101,3 +101,5 @@
- export type FinancialTrajectory = {
-+  mode?: 'DEP' | 'REC' | 'RESULT';
-+  source?: 'YCONSDEP' | 'YCONSREC' | 'ACCOUNTING_LINES';
-   exercise: number;
-   snapshotDate: string;
-diff --git a/apps/web/src/views/HomeView.tsx b/apps/web/src/views/HomeView.tsx
---- a/apps/web/src/views/HomeView.tsx
-+++ b/apps/web/src/views/HomeView.tsx
-@@ -170,2 +170,2 @@
--              <h3>Trajectoire financière</h3>
--              <p>Résultat cumulé constaté, historique et atterrissage projeté au 31 décembre.</p>
-+              <h3>Trajectoire des dépenses</h3>
-+              <p>Dépenses réalisées, trajectoire budgétaire et atterrissage projeté au 31 décembre.</p>
-diff --git a/apps/web/src/components/FinancialTrajectoryChart.tsx b/apps/web/src/components/FinancialTrajectoryChart.tsx
---- a/apps/web/src/components/FinancialTrajectoryChart.tsx
-+++ b/apps/web/src/components/FinancialTrajectoryChart.tsx
-@@ -1 +1 @@
--        {previousSeries.length > 0 && <span><i className="legend-previous" />Historique N-1 / N-2</span>}
-+        {previousSeries.length > 0 && <span><i className="legend-previous" />Historique N-1</span>}
++            const actual = cumulative(snapshotYear).filter((point) => point.date <= snapshotDate);
++            const previous = cumulative(snapshotYear - 1);
++            const snapshotMonth = new Date(`${snapshotDate}T12:00:00`).getMonth() + 1;
++            const anchor = { date: snapshotDate, month: snapshotMonth, value: depAccounted };
++            const lastActual = actual.at(-1);
++            if (!lastActual || lastActual.month < snapshotMonth) actual.push(anchor);
++            else if (lastActual.month === snapshotMonth) actual[actual.length - 1] = anchor;
++
++            const trajectoryTarget = Math.max(0.15, Math.min(0.98, budgetTrajectoryTarget(snapshotDate)));
++            const known = Math.max(depAccounted, depCommitted);
++            const pace = depAccounted / trajectoryTarget;
++            const central = Math.min(depBudget || Number.POSITIVE_INFINITY, Math.max(known, pace));
++            const uncertainty = Math.max(0, central - depAccounted) * 0.18;
++            const depForecast = {
++              low: Math.max(known, central - uncertainty),
++              central,
++              high: central + uncertainty
++            };
++            const budgetReference = Array.from({ length: 12 }, (_, index) => {
++              const month = index + 1;
++              const date = `${snapshotYear}-${String(month).padStart(2, '0')}-${String(new Date(snapshotYear, month, 0).getDate()).padStart(2, '0')}`;
++              return { date, month, value: depBudget * budgetTrajectoryTarget(date) };
++            });
++
++            e.financialTrajectory = {
++              mode: 'DEP',
++              source: 'CLCA+YCONSDEP',
++              exercise: snapshotYear,
++              snapshotDate,
++              actual,
++              previous: previous.length ? { [String(snapshotYear - 1)]: previous } : {},
++              budgetReference,
++              forecast: depForecast,
++              annualBudgetResult: depBudget
++            };
+           }
+-          const byYear = new Map<number, Array<{ date: string; month: number; value: number }>>();
+-          for (const point of snapshots.values()) {
+-            const date = new Date(`${point.date}T12:00:00`);
+-            const year = date.getFullYear();
+-            const list = byYear.get(year) || [];
+-            list.push({ date: point.date, month: date.getMonth() + 1, value: point.actualRec - point.actualDep });
+-            byYear.set(year, list);
+-          }
+-          const latestBudgetResult = revenues.budget - expenses.budget;
+-          const budgetReference = Array.from({ length: 12 }, (_, index) => {
+-            const month = index + 1;
+-            const date = `${snapshotYear}-${String(month).padStart(2, '0')}-${String(new Date(snapshotYear, month, 0).getDate()).padStart(2, '0')}`;
+-            return { date, month, value: latestBudgetResult * budgetTrajectoryTarget(date) };
+-          });
+-          e.financialTrajectory = {
+-            exercise: snapshotYear,
+-            snapshotDate: String(e.sources.budget.snapshot_date).slice(0, 10),
+-            actual: byYear.get(snapshotYear) || [],
+-            previous: Object.fromEntries([snapshotYear - 2, snapshotYear - 1].map((year) => [String(year), byYear.get(year) || []])),
+-            budgetReference,
+-            forecast: { low: e.resultForecast.low, central: e.resultForecast.central, high: e.resultForecast.high },
+-            annualBudgetResult: latestBudgetResult
+-          };
