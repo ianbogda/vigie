@@ -207,13 +207,15 @@ export function registerAdministrationRoutes(app: FastifyInstance, dependencies:
     try {
       await withTransaction(pool, async (client) => {
         if (normalizedRoles.length) {
-          const agencyIds = [...new Set(normalizedRoles.map((r: any) => r.agencyId))];
+          const agencyIds: number[] = [
+            ...new Set<number>(normalizedRoles.map((r: any) => Number(r.agencyId)))
+          ];
           const agencies = await client.query(
             'select id from accounting_agencies where id = any($1::int[]) and is_active',
             [agencyIds]
           );
           const existing = new Set(agencies.rows.map((a: any) => Number(a.id)));
-          const missing = agencyIds.filter((id: number) => !existing.has(id));
+          const missing = agencyIds.filter((id) => !existing.has(id));
           if (missing.length) throw new Error('Une agence sélectionnée est introuvable ou inactive.');
         }
 
@@ -225,7 +227,11 @@ export function registerAdministrationRoutes(app: FastifyInstance, dependencies:
           normalizedRoles.map((r: any) => [req.params.id, r.agencyId, r.role])
         );
       });
-      await audit(req, 'USER_SCOPE_UPDATE', null, { userId: req.params.id, roles });
+      await audit(req, 'USER_SCOPE_UPDATE', null, {
+        userId: Number(req.params.id),
+        previousRoles,
+        roles: normalizedRoles
+      });
       return { ok: true };
     } catch (e: any) {
       return reply.code(400).send({ error: e.message });
@@ -264,11 +270,9 @@ export function registerAdministrationRoutes(app: FastifyInstance, dependencies:
       active
     ]);
     if (!q.rowCount) return reply.code(404).send({ error: 'Agence introuvable.' });
-     await audit(req, 'USER_SCOPE_UPDATE', null, {
-        userId: Number(req.params.id),
-        previousRoles,
-        roles: normalizedRoles
-      });
+     await audit(req, 'AGENCY_UPDATE', null, {
+      agencyId: req.params.id
+    });
     return { ok: true, agency: q.rows[0] };
   });
   app.put('/api/admin/establishments/:id/agency', async (req: any, reply: any) => {
