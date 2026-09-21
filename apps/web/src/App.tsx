@@ -17,7 +17,11 @@ import {
   Upload,
   UsersRound,
   WalletCards,
-  Settings
+  Settings,
+  ClipboardCheck,
+  HandCoins,
+  Utensils,
+  Boxes
 } from 'lucide-react';
 import { api } from './lib/api';
 import { dateFr } from './lib/format';
@@ -31,18 +35,46 @@ import { LoginView } from './components/LoginView';
 import { ContextualHelp } from './components/ContextualHelp';
 import { AdminView } from './views/AdminView';
 
-const NAV = [
-  ['Accueil', Home],
-  ['Établissements', Building2],
-  ['Analyse financière', LineChart],
-  ['Budget', ReceiptText],
-  ['Dépenses', BadgeEuro],
-  ['Recettes', WalletCards],
-  ['Trésorerie', Landmark],
-  ['Clients', UsersRound],
-  ['Fournisseurs', UsersRound],
-  ['Comptabilité générale', BookOpenCheck],
-  ['Maîtrise des risques', ShieldCheck]
+const NAV_SECTIONS = [
+  {
+    label: null,
+    items: [
+      ['Accueil', Home],
+      ['Établissements', Building2]
+    ]
+  },
+  {
+    label: 'PILOTAGE',
+    items: [
+      ['Analyse financière', LineChart],
+      ['Budget & trajectoire', ReceiptText],
+      ['Trésorerie', Landmark]
+    ]
+  },
+  {
+    label: 'FLUX',
+    items: [
+      ['Recouvrement', HandCoins],
+      ['Dépenses & engagements', BadgeEuro],
+      ['Fournisseurs', UsersRound]
+    ]
+  },
+  {
+    label: 'COMPTABILITÉ',
+    items: [
+      ['Comptabilité générale', BookOpenCheck],
+      ['Financements affectés', WalletCards],
+      ['Patrimoine', Boxes]
+    ]
+  },
+  { label: 'ACTIVITÉS', items: [['SRH', Utensils]] },
+  {
+    label: 'CONTRÔLE',
+    items: [
+      ['Qualité comptable', ClipboardCheck],
+      ['Maîtrise des risques', ShieldCheck]
+    ]
+  }
 ] as const;
 export default function App() {
   const [user, setUser] = useState<any | undefined>(undefined);
@@ -137,11 +169,16 @@ export default function App() {
               Administration
             </button>
           ) : (
-            NAV.map(([n, I]) => (
-              <button className={view === n ? 'active' : ''} onClick={() => setView(n)} key={n}>
-                <I size={18} />
-                {n}
-              </button>
+            NAV_SECTIONS.map((section, sectionIndex) => (
+              <div className="nav-section" key={section.label || `main-${sectionIndex}`}>
+                {section.label && <div className="nav-section-label">{section.label}</div>}
+                {section.items.map(([n, I]) => (
+                  <button className={view === n ? 'active' : ''} onClick={() => setView(n)} key={n}>
+                    <I size={18} />
+                    <span>{n}</span>
+                  </button>
+                ))}
+              </div>
             ))
           )}
         </nav>

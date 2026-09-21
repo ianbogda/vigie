@@ -147,13 +147,13 @@ function FinancialIndicatorsChart({ data }: { data: FinancialIndicatorPoint[] })
   );
 }
 
-export function FinancialAnalysisView({ current }: { current: Eple }) {
+export function FinancialAnalysisView({ current, initialTab = 'overview' }: { current: Eple; initialTab?: 'overview' | 'srh' }) {
   const [budget, setBudget] = useState<BudgetResponse | null>(null),
     [financial, setFinancial] = useState<FinancialResponse | null>(null),
     [exercise, setExercise] = useState<number>(new Date().getFullYear());
   const [analysisOpen, setAnalysisOpen] = useState(false),
     [fdrPrep, setFdrPrep] = useState<FdrAnalysisResponse | null>(null),
-    [financialTab, setFinancialTab] = useState<'overview' | 'srh'>('overview');
+    [financialTab, setFinancialTab] = useState<'overview' | 'srh'>(initialTab);
   useEffect(() => {
     setBudget(null);
     setFinancial(null);

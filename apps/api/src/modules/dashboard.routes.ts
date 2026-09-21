@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { budgetSignal, budgetTrajectoryTarget } from './imports/import-parsers.js';
 import { treasuryContext } from '../treasury.js';
+import { buildExpenseTrajectory } from './expense-trajectory.js';
 interface Dependencies {
   pool: Pool;
   version: string;
@@ -368,6 +369,14 @@ export function registerDashboardRoutes(app: FastifyInstance, dependencies: Depe
         }
         states.budget = severity(e.signals.filter((x: any) => x.domain === 'Budget'));
       }
+      const expenseTrajectory = await buildExpenseTrajectory(pool, {
+        opaleEntity: e.opaleEntity,
+        uai: e.uai,
+        name: e.name,
+        budgetSourceKey: e.sources.budget?.source_key || null,
+        purchaseEstablishment: e.sources.purchases?.establishment_name || null
+      });
+      if (expenseTrajectory) e.financialTrajectory = expenseTrajectory;
       if (e.sources.purchases) {
         const q = (
           await pool.query(

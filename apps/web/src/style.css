@@ -101,6 +101,30 @@ body {
   background: #dceeff;
   color: #0865ca;
 }
+
+.sidebar nav {
+  gap: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 132px;
+  scrollbar-width: thin;
+}
+.nav-section {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 7px;
+}
+.nav-section-label {
+  padding: 9px 12px 4px;
+  color: #8296ad;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .11em;
+}
+.sidebar nav button span {
+  min-width: 0;
+}
+
 .side-quote {
   position: absolute;
   bottom: 68px;
