@@ -50,7 +50,7 @@ export function DomainView({ title, current, all, onSelect }: DomainViewProps) {
         <span>VUE MÉTIER</span>
         <h2>{title}</h2>
         <p>
-          {current ? `Périmètre : ${current.name}.` : 'Vue agence.'} Cette vue utilisera le même moteur explicable que
+          {current?.name ? `Périmètre : ${current.name}.` : 'Vue agence.'} Cette vue utilisera le même moteur explicable que
           le cockpit, sans dupliquer les données.
         </p>
       </div>
