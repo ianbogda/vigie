@@ -3,6 +3,7 @@ import {
   Building2,
   Database,
   KeyRound,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -75,6 +76,20 @@ export function AdminView({ dash, reload }: { dash: Dashboard; reload: () => Pro
         const r = await api.createUser(body);
         const aid = Number(f.get('agencyId'));
         if (aid) await api.updateUserAgencies(r.user.id, [{ agencyId: aid, role: String(f.get('role') || 'VIEWER') }]);
+      }
+      if (modal?.kind === 'edit-user') {
+        const user = modal.user as User;
+        await api.updateUser(user.id, {
+          firstName: f.get('firstName'),
+          lastName: f.get('lastName'),
+          globalRole: f.get('globalRole'),
+          isActive: user.is_active
+        });
+        const agencyId = Number(f.get('agencyId'));
+        await api.updateUserAgencies(
+          user.id,
+          agencyId ? [{ agencyId, role: String(f.get('role') || 'VIEWER') }] : []
+        );
       }
       if (modal?.kind === 'agency') await api.createAgency(String(f.get('name') || ''));
       if (modal?.kind === 'reset') await api.resetUserPassword(modal.user.id, String(f.get('password') || ''));
@@ -190,6 +205,9 @@ export function AdminView({ dash, reload }: { dash: Dashboard; reload: () => Pro
                 <span className={`admin-state ${u.is_active ? 'ok' : 'off'}`}>
                   {u.is_active ? 'Actif' : 'Suspendu'}
                 </span>
+                <button className="btn-soft" onClick={() => setModal({ kind: 'edit-user', user: u })}>
+                  <Pencil size={14} /> Modifier
+                </button>
                 <button className="btn-soft" onClick={() => setModal({ kind: 'reset', user: u })}>
                   <KeyRound size={14} /> Mot de passe
                 </button>
@@ -314,26 +332,38 @@ export function AdminView({ dash, reload }: { dash: Dashboard; reload: () => Pro
             <h3>
               {modal.kind === 'user'
                 ? 'Créer un utilisateur'
-                : modal.kind === 'agency'
-                  ? 'Créer une agence'
-                  : 'Réinitialiser le mot de passe'}
+                : modal.kind === 'edit-user'
+                  ? 'Modifier un utilisateur'
+                  : modal.kind === 'agency'
+                    ? 'Créer une agence'
+                    : 'Réinitialiser le mot de passe'}
             </h3>
             <form onSubmit={submit}>
-              {modal.kind === 'user' && (
+              {(modal.kind === 'user' || modal.kind === 'edit-user') && (
                 <>
                   <label>Prénom</label>
-                  <input name="firstName" />
+                  <input name="firstName" defaultValue={modal.user?.first_name || ''} />
                   <label>Nom</label>
-                  <input name="lastName" />
-                  <label>Adresse électronique</label>
-                  <input name="email" type="email" required />
+                  <input name="lastName" defaultValue={modal.user?.last_name || ''} />
+                  {modal.kind === 'user' ? (
+                    <>
+                      <label>Adresse électronique</label>
+                      <input name="email" type="email" required />
+                    </>
+                  ) : (
+                    <>
+                      <label>Adresse électronique</label>
+                      <input value={modal.user?.email || ''} disabled />
+                      <small>L’adresse électronique n’est pas modifiée par ce formulaire.</small>
+                    </>
+                  )}
                   <label>Profil global</label>
-                  <select name="globalRole">
+                  <select name="globalRole" defaultValue={modal.user?.global_role || 'USER'}>
                     <option value="USER">Utilisateur</option>
                     <option value="ADMIN">Administrateur</option>
                   </select>
-                  <label>Agence</label>
-                  <select name="agencyId">
+                  <label>Agence comptable d’affectation</label>
+                  <select name="agencyId" defaultValue={modal.user?.roles?.[0]?.agencyId || ''}>
                     <option value="">Aucune</option>
                     {agencies
                       .filter((a) => a.is_active)
@@ -344,12 +374,18 @@ export function AdminView({ dash, reload }: { dash: Dashboard; reload: () => Pro
                       ))}
                   </select>
                   <label>Rôle dans l’agence</label>
-                  <select name="role">
+                  <select name="role" defaultValue={modal.user?.roles?.[0]?.role || 'ACCOUNTANT'}>
                     <option value="ACCOUNTANT">Agent comptable</option>
                     <option value="DEPUTY">Fondé de pouvoir</option>
                     <option value="AGENCY_USER">Agent agence</option>
                     <option value="VIEWER">Lecteur</option>
                   </select>
+                  {modal.kind === 'edit-user' && modal.user?.roles?.[0] && (
+                    <small>
+                      Affectation actuelle : {roleLabel(modal.user.roles[0].role)} · {modal.user.roles[0].agencyName}.
+                      L’enregistrement remplace le périmètre d’agence actuel.
+                    </small>
+                  )}
                 </>
               )}
               {modal.kind === 'agency' && (

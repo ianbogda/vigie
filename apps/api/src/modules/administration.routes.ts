@@ -183,14 +183,46 @@ export function registerAdministrationRoutes(app: FastifyInstance, dependencies:
   app.put('/api/admin/users/:id/agencies', async (req: any, reply: any) => {
     if (!isAdmin(req)) return reply.code(403).send({ error: 'Droit administrateur requis.' });
     const roles = Array.isArray(req.body?.roles) ? req.body.roles : [];
+    const allowedRoles = new Set(['ACCOUNTANT', 'DEPUTY', 'AGENCY_USER', 'VIEWER']);
+    const normalizedRoles = roles.map((r: any) => ({
+      agencyId: Number(r.agencyId),
+      role: String(r.role || '')
+    }));
+
+    if (normalizedRoles.some((r: any) => !Number.isInteger(r.agencyId) || r.agencyId <= 0))
+      return reply.code(400).send({ error: 'Agence invalide.' });
+    if (normalizedRoles.some((r: any) => !allowedRoles.has(r.role)))
+      return reply.code(400).send({ error: 'Rôle d’agence invalide.' });
+
+    const previousRoles = (
+      await pool.query(
+        `select accounting_agency_id as "agencyId", role
+           from user_agency_roles
+          where user_id=$1
+          order by accounting_agency_id, role`,
+        [req.params.id]
+      )
+    ).rows;
+
     try {
       await withTransaction(pool, async (client) => {
+        if (normalizedRoles.length) {
+          const agencyIds = [...new Set(normalizedRoles.map((r: any) => r.agencyId))];
+          const agencies = await client.query(
+            'select id from accounting_agencies where id = any($1::int[]) and is_active',
+            [agencyIds]
+          );
+          const existing = new Set(agencies.rows.map((a: any) => Number(a.id)));
+          const missing = agencyIds.filter((id: number) => !existing.has(id));
+          if (missing.length) throw new Error('Une agence sélectionnée est introuvable ou inactive.');
+        }
+
         await client.query('delete from user_agency_roles where user_id=$1', [req.params.id]);
         await insertMany(
           client,
           'user_agency_roles',
           ['user_id', 'accounting_agency_id', 'role'],
-          roles.map((r: any) => [req.params.id, Number(r.agencyId), String(r.role)])
+          normalizedRoles.map((r: any) => [req.params.id, r.agencyId, r.role])
         );
       });
       await audit(req, 'USER_SCOPE_UPDATE', null, { userId: req.params.id, roles });
@@ -232,7 +264,11 @@ export function registerAdministrationRoutes(app: FastifyInstance, dependencies:
       active
     ]);
     if (!q.rowCount) return reply.code(404).send({ error: 'Agence introuvable.' });
-    await audit(req, 'AGENCY_UPDATE', null, { agencyId: req.params.id });
+     await audit(req, 'USER_SCOPE_UPDATE', null, {
+        userId: Number(req.params.id),
+        previousRoles,
+        roles: normalizedRoles
+      });
     return { ok: true, agency: q.rows[0] };
   });
   app.put('/api/admin/establishments/:id/agency', async (req: any, reply: any) => {
