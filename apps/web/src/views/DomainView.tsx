@@ -6,6 +6,7 @@ import { AgencyFinancialAnalysisView, FinancialAnalysisView } from './domain/fin
 import { RiskMasteryView } from './domain/risk-mastery-view';
 import { AgedView, AgencyAgedView } from './domain/aged-views';
 import { AgencyTreasuryView, TreasuryView } from './domain/treasury-views';
+import { AffectedFinancingView, AgencyAffectedFinancingView } from './domain/affected-financing-view';
 
 type DomainViewProps = {
   title: string;
@@ -28,6 +29,8 @@ export function DomainView({ title, current, all, onSelect }: DomainViewProps) {
   if (title === 'Budget' || title === 'Budget & trajectoire') return <BudgetView current={current} all={all} onSelect={onSelect} />;
   if (title === 'Trésorerie')
     return current ? <TreasuryView current={current} /> : <AgencyTreasuryView all={all} onSelect={onSelect} />;
+  if (title === 'Financements affectés')
+    return current ? <AffectedFinancingView current={current} /> : <AgencyAffectedFinancingView all={all} onSelect={onSelect} />;
   if (title === 'Comptabilité générale')
     return current ? <AccountingView current={current} /> : <AgencyAccountingView all={all} onSelect={onSelect} />;
   if (title === 'Clients' || title === 'Recouvrement')
