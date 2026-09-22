@@ -71,6 +71,7 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
             [entity, type]
           )
         ).rows[0] || null;
+      };
       const [eblc, depSnap, recSnap, clientSnap, supplierSnap] = await Promise.all([
         latest('EBLC'),
         latest(['YECBUD', 'YCONSDEP']),
