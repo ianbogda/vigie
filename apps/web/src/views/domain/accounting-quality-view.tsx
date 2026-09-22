@@ -10,7 +10,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { api } from '../../lib/api';
-import './accounting-quality.css';
+/*import './accounting-quality.css';*/
 import { dateFr, eur } from '../../lib/format';
 import type { Eple, State } from '../../types/dashboard';
 
