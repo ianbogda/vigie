@@ -1,93 +1,43 @@
-import { AlertTriangle, Database, Landmark, WalletCards } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Building2, Clock3, Database, Landmark, WalletCards } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
 import type { Eple } from '../../types/dashboard';
 import { eur } from './domain-utils';
 
-const n = (v: unknown) => Number(v || 0);
-const abs = (v: unknown) => Math.abs(n(v));
-const financingAccount = (a: string) => /^(441|442|443|448)/.test(a);
+const n=(v:unknown)=>Number(v||0), abs=(v:unknown)=>Math.abs(n(v));
+const financingAccount=(a:string)=>/^(441|442|443|448)/.test(a);
+const ageMonths=(d?:string)=>{if(!d)return null;const x=new Date(d),now=new Date();return Math.max(0,(now.getFullYear()-x.getFullYear())*12+now.getMonth()-x.getMonth())};
+const pct=(v:number,total:number)=>total>0?Math.max(0,Math.min(100,Math.round(v/total*100))):0;
+const sourceLabel=(account:string)=>account.startsWith('441')?'État':account.startsWith('442')?'Collectivité':account.startsWith('443')?'UE / autres organismes':'Autres';
 
-export function AffectedFinancingView({ current }: { current: Eple }) {
-  const [accounting, setAccounting] = useState<any>(null);
-  const [financial, setFinancial] = useState<any>(null);
-  const [fdrDetail, setFdrDetail] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const key = current.opaleEntity || current.uai || current.id;
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    Promise.allSettled([api.accounting(key), api.financial(key)])
-      .then(async ([a, f]) => {
-        if (!live) return;
-        const av = a.status === 'fulfilled' ? a.value : null;
-        const fv: any = f.status === 'fulfilled' ? f.value : null;
-        setAccounting(av);
-        setFinancial(fv);
-        const exercise = Number(fv?.fdr?.exercise || fv?.balance?.exercise || new Date().getFullYear());
-        const detail = await api.financialFdrAnalysis(key, exercise + (fv?.fdr?.exercise ? 1 : 0)).catch(() => null);
-        if (live) setFdrDetail(detail);
-      })
-      .finally(() => live && setLoading(false));
-    return () => { live = false; };
-  }, [key]);
-
-  const rows = useMemo(() => (accounting?.accounts || [])
-    .filter((a: any) => financingAccount(String(a.account || '')) && abs(a.balance) > 0.005)
-    .map((a: any) => ({ ...a, amount: abs(a.balance) }))
-    .sort((a: any, b: any) => b.amount - a.amount), [accounting]);
-  const identified = rows.reduce((s: number, r: any) => s + r.amount, 0);
-  const fdr = n(financial?.fdr?.amount);
-  const parts = fdrDetail?.accounts || {};
-  const knownAdjustments = n(parts.provisions) + n(parts.cautions) + n(parts.stocks) + n(parts.doubtful) + n(fdrDetail?.aged?.overOneYear);
-  const mobilisable = fdr ? Math.max(0, fdr - knownAdjustments) : null;
-  const incomplete = !fdrDetail?.aged?.exactOverOneYear;
-
-  if (loading) return <div className="page"><div className="loading">Construction de la vue Financements affectés…</div></div>;
-
-  return <div className="page fade-in affected-financing">
-    <div className="financial-head">
-      <div><span>COMPTABILITÉ</span><h2><WalletCards size={24}/> Financements affectés</h2>
-        <p>Lecture des soldes comptables liés aux financements affectés et mise en perspective avec le fonds de roulement.</p></div>
-    </div>
-
-    <div className="af-kpis">
-      <article><span>FINANCEMENTS À QUALIFIER</span><strong>{eur(identified)}</strong><small>{rows.length} compte{rows.length > 1 ? 's' : ''} avec solde</small></article>
-      <article><span>FDR COMPTABLE</span><strong>{fdr ? eur(fdr) : '—'}</strong><small>{financial?.fdr?.exercise ? `Exercice ${financial.fdr.exercise}` : 'Donnée COFI requise'}</small></article>
-      <article className={incomplete ? 'watch' : ''}><span>RETRAITEMENTS CONNUS</span><strong>{fdr ? eur(knownAdjustments) : '—'}</strong><small>Stocks, provisions, cautions, créances douteuses</small></article>
-      <article className="good"><span>FDR MOBILISABLE ESTIMÉ</span><strong>{mobilisable == null ? '—' : eur(mobilisable)}</strong><small>{incomplete ? 'Estimation partielle — données à compléter' : 'Estimation sur données disponibles'}</small></article>
-    </div>
-
-    <div className="af-grid">
-      <section className="treasury-panel af-main">
-        <div className="section-title"><div><h3>Soldes de financements à qualifier</h3><p>Les comptes sont détectés à partir des données comptables importées. VIGIE ne déduit pas automatiquement ces montants du FDR.</p></div></div>
-        {rows.length ? <div className="af-table"><div className="af-row head"><span>Compte</span><span>Libellé</span><span>Solde</span><span>Dernier mouvement</span></div>
-          {rows.map((r: any) => <div className="af-row" key={r.account}><b>{r.account}</b><span>{r.label || '—'}</span><strong>{eur(r.amount)}</strong><span>{r.lastDate ? new Date(r.lastDate).toLocaleDateString('fr-FR') : '—'}</span></div>)}</div>
-          : <div className="flow-empty"><Database size={28}/><b>Aucun solde de financement détecté</b><span>Importer les données comptables Op@le pour alimenter cette analyse.</span></div>}
-        <div className="accounting-note"><AlertTriangle size={17}/><span><b>À qualifier.</b> Un solde comptable ne suffit pas à reconstituer une opération de financement, son montant accordé, son emploi et son reliquat. Ces informations feront l’objet d’un rapprochement dédié.</span></div>
-      </section>
-
-      <section className="treasury-panel af-fdr">
-        <div className="section-title"><div><h3>FDR mobilisable — estimation</h3><p>Décomposition explicable à partir des données actuellement disponibles.</p></div></div>
-        <div className="af-calc"><div><span>FDR comptable</span><b>{fdr ? eur(fdr) : '—'}</b></div>
-          <h4>Éléments non immédiatement mobilisables connus</h4>
-          <div><span>Provisions</span><b>− {eur(n(parts.provisions))}</b></div><div><span>Cautions</span><b>− {eur(n(parts.cautions))}</b></div>
-          <div><span>Stocks</span><b>− {eur(n(parts.stocks))}</b></div><div><span>Créances douteuses</span><b>− {eur(n(parts.doubtful))}</b></div>
-          <div className="muted"><span>Créances &gt; 1 an non provisionnées</span><b>{fdrDetail?.aged?.exactOverOneYear ? `− ${eur(n(fdrDetail.aged.overOneYear))}` : 'non disponible'}</b></div>
-          <div className="muted"><span>Réserve si BFR positif</span><b>à compléter</b></div><div className="muted"><span>Prélèvements FDR déjà votés</span><b>à compléter</b></div>
-          <div className="total"><span>FDR mobilisable estimé</span><strong>{mobilisable == null ? '—' : eur(mobilisable)}</strong></div></div>
-        {incomplete && <div className="af-warning"><AlertTriangle size={18}/><span>VIGIE ne transforme pas les créances &gt; 120 jours en créances &gt; 1 an. L’estimation reste volontairement partielle tant que cette donnée, le BFR et les prélèvements votés ne sont pas disponibles.</span></div>}
-      </section>
-    </div>
-
-    <section className="treasury-panel af-coverage"><div className="section-title"><div><h3><Landmark size={20}/> Couverture des financements</h3><p>Préparation du rapprochement entre opérations suivies et soldes comptables.</p></div></div>
-      <div className="af-placeholder"><strong>{eur(identified)}</strong><span>de soldes comptables détectés</span><i>Le suivi par opération (accordé / reçu / employé / reste à employer) nécessite une source structurée supplémentaire. Aucun reliquat n’est inventé à partir du seul solde comptable.</i></div>
-    </section>
-  </div>;
+export function AffectedFinancingView({current}:{current:Eple}){
+ const [accounting,setAccounting]=useState<any>(null),[financial,setFinancial]=useState<any>(null),[fdrDetail,setFdrDetail]=useState<any>(null),[loading,setLoading]=useState(true);
+ const key=current.opaleEntity||current.uai||current.id;
+ useEffect(()=>{let live=true;setLoading(true);Promise.allSettled([api.accounting(key),api.financial(key)]).then(async([a,f])=>{if(!live)return;const av=a.status==='fulfilled'?a.value:null,fv:any=f.status==='fulfilled'?f.value:null;setAccounting(av);setFinancial(fv);const ex=Number(fv?.fdr?.exercise||fv?.balance?.exercise||new Date().getFullYear());setFdrDetail(await api.financialFdrAnalysis(key,ex+(fv?.fdr?.exercise?1:0)).catch(()=>null))}).finally(()=>live&&setLoading(false));return()=>{live=false}},[key]);
+ const rows=useMemo(()=>(accounting?.accounts||[]).filter((a:any)=>financingAccount(String(a.account||''))&&abs(a.balance)>.005).map((a:any)=>({...a,amount:abs(a.balance),age:ageMonths(a.lastDate)})).sort((a:any,b:any)=>b.amount-a.amount),[accounting]);
+ const identified=rows.reduce((s:number,r:any)=>s+r.amount,0), old=rows.filter((r:any)=>r.age!=null&&r.age>24), oldAmount=old.reduce((s:number,r:any)=>s+r.amount,0);
+ const fdr=n(financial?.fdr?.amount),parts=fdrDetail?.accounts||{},known=n(parts.provisions)+n(parts.cautions)+n(parts.stocks)+n(parts.doubtful)+n(fdrDetail?.aged?.overOneYear),mobilisable=fdr?Math.max(0,fdr-known):null,incomplete=!fdrDetail?.aged?.exactOverOneYear;
+ const buckets=[['< 1 an',rows.filter((r:any)=>r.age!=null&&r.age<12).reduce((s:number,r:any)=>s+r.amount,0)],['1 – 2 ans',rows.filter((r:any)=>r.age!=null&&r.age>=12&&r.age<=24).reduce((s:number,r:any)=>s+r.amount,0)],['> 2 ans',oldAmount],['Non daté',rows.filter((r:any)=>r.age==null).reduce((s:number,r:any)=>s+r.amount,0)]] as [string,number][];
+ if(loading)return <div className="page"><div className="loading">Construction de la vue Financements affectés…</div></div>;
+ return <div className="page fade-in affected-financing af-cockpit">
+  <div className="financial-head"><div><span>COMPTABILITÉ</span><h2><WalletCards size={24}/> Financements affectés</h2><p>{current.name} · lecture des ressources affectées, de leur ancienneté et de leur incidence sur la disponibilité financière.</p></div></div>
+  <div className="af-hero"><div className="af-identity"><Building2/><div><b>{current.name}</b><small>{current.uai||current.opaleEntity||'Établissement'}</small></div></div><div className="af-hero-kpis"><article><span>Soldes identifiés</span><strong>{eur(identified)}</strong><small>{rows.length} positions à qualifier</small></article><article className="watch"><span>Anciens (&gt; 2 ans)</span><strong>{eur(oldAmount)}</strong><small>{old.length} position{old.length>1?'s':''}</small></article><article className="good"><span>FDR mobilisable estimé</span><strong>{mobilisable==null?'—':eur(mobilisable)}</strong><small>{fdr?`${pct(mobilisable||0,fdr)} % du FDR comptable`:'Donnée COFI requise'}</small></article></div></div>
+  <div className="af-dashboard-grid"><section className="treasury-panel"><div className="section-title"><div><h3>Répartition des soldes identifiés</h3><p>Lecture par famille de comptes.</p></div></div><div className="af-source-bars">{['État','Collectivité','UE / autres organismes','Autres'].map(label=>{const value=rows.filter((r:any)=>sourceLabel(String(r.account))===label).reduce((s:number,r:any)=>s+r.amount,0);return <div key={label}><span>{label}<b>{eur(value)}</b></span><i><em style={{width:`${pct(value,identified)}%`}}/></i></div>})}</div></section>
+  <section className="treasury-panel"><div className="section-title"><div><h3>Âge des financements</h3><p>Ancienneté du dernier mouvement disponible.</p></div></div><div className="af-age-bars">{buckets.map(([label,value],i)=><div key={label} className={i===2?'danger':''}><span>{label}</span><i><em style={{width:`${pct(value,identified)}%`}}/></i><b>{eur(value)}</b></div>)}</div></section></div>
+  <section className="treasury-panel af-priority"><div className="section-title"><div><h3>À regarder maintenant</h3><p>Les positions les plus anciennes ou les plus significatives à qualifier.</p></div></div><div className="af-priority-cards">{rows.slice().sort((a:any,b:any)=>(b.age||0)-(a.age||0)||b.amount-a.amount).slice(0,4).map((r:any)=><article key={r.account} className={(r.age||0)>24?'danger':(r.age||0)>12?'watch':''}><div><span>{sourceLabel(String(r.account))}</span><b>{r.account}</b></div><strong>{eur(r.amount)}</strong><p>{r.label||'Solde comptable à qualifier'}</p><small>{r.age==null?'Dernier mouvement non daté':`Dernier mouvement il y a ${r.age} mois`}</small></article>)}</div></section>
+  <div className="af-lower-grid"><section className="treasury-panel af-fdr-visual"><div className="section-title"><div><h3>FDR mobilisable — estimation</h3><p>Passage du FDR comptable à l'estimation disponible.</p></div></div><div className="af-fdr-numbers"><strong>{fdr?eur(fdr):'—'}</strong><span>FDR comptable</span></div>{fdr>0&&<div className="af-fdr-track"><i style={{width:`${pct(mobilisable||0,fdr)}%`}}/></div>}<div className="af-fdr-adjust"><b>− {eur(known)}</b><span>retraitements connus</span></div><div className="af-mini-adjustments"><span>Stocks <b>{eur(n(parts.stocks))}</b></span><span>Provisions <b>{eur(n(parts.provisions))}</b></span><span>Cautions <b>{eur(n(parts.cautions))}</b></span><span>Créances douteuses <b>{eur(n(parts.doubtful))}</b></span><span>Créances &gt; 1 an <b>{fdrDetail?.aged?.exactOverOneYear?eur(n(fdrDetail.aged.overOneYear)):'non disponible'}</b></span></div><div className="af-fdr-result"><span>FDR mobilisable estimé</span><strong>{mobilisable==null?'—':eur(mobilisable)}</strong></div>{incomplete&&<div className="af-warning"><AlertTriangle size={17}/><span>Estimation partielle : certaines données nécessaires au retraitement restent à compléter.</span></div>}</section>
+  <section className="treasury-panel"><div className="section-title"><div><h3>Positions comptables</h3><p>Accès au détail avant rapprochement par opération.</p></div></div><div className="af-compact-list">{rows.slice(0,6).map((r:any)=><div key={r.account}><span><b>{r.account}</b><small>{r.label||sourceLabel(String(r.account))}</small></span><strong>{eur(r.amount)}</strong></div>)}{!rows.length&&<div className="flow-empty"><Database size={26}/><b>Aucun solde détecté</b></div>}</div><div className="accounting-note"><AlertTriangle size={16}/><span>Un solde comptable n'est pas assimilé automatiquement à un reliquat de financement.</span></div></section></div>
+ </div>
 }
 
-export function AgencyAffectedFinancingView({ all, onSelect }: { all: Eple[]; onSelect: (id: string) => void }) {
-  return <div className="page fade-in affected-financing"><div className="financial-head"><div><span>COMPTABILITÉ · VUE AGENCE</span><h2><WalletCards size={24}/> Financements affectés</h2><p>Sélectionnez un établissement pour analyser les soldes et le FDR mobilisable estimé.</p></div></div>
-    <section className="treasury-panel"><div className="af-agency-list">{all.map(e => <button key={e.id} onClick={() => onSelect(e.id)}><span><b>{e.name}</b><small>{e.uai || e.opaleEntity || 'Établissement'}</small></span><span>Analyser →</span></button>)}</div></section></div>;
+type AgencyRow={e:Eple;identified:number;count:number;oldAmount:number;oldCount:number;error?:boolean};
+export function AgencyAffectedFinancingView({all,onSelect}:{all:Eple[];onSelect:(id:string)=>void}){
+ const [rows,setRows]=useState<AgencyRow[]>([]),[loading,setLoading]=useState(true);
+ useEffect(()=>{let live=true;setLoading(true);Promise.all(all.map(async e=>{const key=e.opaleEntity||e.uai||e.id;try{const a:any=await api.accounting(key);const items=(a?.accounts||[]).filter((x:any)=>financingAccount(String(x.account||''))&&abs(x.balance)>.005);const old=items.filter((x:any)=>{const age=ageMonths(x.lastDate);return age!=null&&age>24});return{e,identified:items.reduce((s:number,x:any)=>s+abs(x.balance),0),count:items.length,oldAmount:old.reduce((s:number,x:any)=>s+abs(x.balance),0),oldCount:old.length}}catch{return{e,identified:0,count:0,oldAmount:0,oldCount:0,error:true}}})).then(v=>live&&setRows(v)).finally(()=>live&&setLoading(false));return()=>{live=false}},[all]);
+ const total=rows.reduce((s,r)=>s+r.identified,0),old=rows.reduce((s,r)=>s+r.oldAmount,0),alerts=rows.filter(r=>r.oldCount>0).length,positions=rows.reduce((s,r)=>s+r.count,0);
+ if(loading)return <div className="page"><div className="loading">Construction de la vue agence…</div></div>;
+ return <div className="page fade-in affected-financing af-cockpit"><div className="financial-head"><div><span>COMPTABILITÉ · VUE AGENCE</span><h2><WalletCards size={24}/> Financements affectés — Vue agence</h2><p>Synthèse des soldes de financements détectés sur les établissements rattachés.</p></div></div>
+ <div className="af-kpis agency"><article><span>SOLDES IDENTIFIÉS</span><strong>{eur(total)}</strong><small>{positions} positions comptables</small></article><article className="watch"><span>ANCIENS (&gt; 2 ANS)</span><strong>{eur(old)}</strong><small>{pct(old,total)} % des soldes identifiés</small></article><article className="danger"><span>ÉTABLISSEMENTS À REGARDER</span><strong>{alerts}</strong><small>sur {all.length} établissements</small></article><article><span>COUVERTURE</span><strong>{rows.filter(r=>!r.error).length}/{all.length}</strong><small>établissements analysables</small></article></div>
+ <div className="af-dashboard-grid"><section className="treasury-panel"><div className="section-title"><div><h3>Concentration des soldes</h3><p>Principaux établissements concernés.</p></div></div><div className="af-source-bars">{rows.slice().sort((a,b)=>b.identified-a.identified).slice(0,5).map(r=><div key={r.e.id}><span>{r.e.name}<b>{eur(r.identified)}</b></span><i><em style={{width:`${pct(r.identified,total)}%`}}/></i></div>)}</div></section><section className="treasury-panel"><div className="section-title"><div><h3><Clock3 size={18}/> Ancienneté</h3><p>Établissements portant des soldes anciens.</p></div></div><div className="af-agency-alerts">{rows.filter(r=>r.oldCount).sort((a,b)=>b.oldAmount-a.oldAmount).slice(0,4).map(r=><button key={r.e.id} onClick={()=>onSelect(r.e.id)}><AlertTriangle/><span><b>{r.e.name}</b><small>{r.oldCount} position{r.oldCount>1?'s':''} &gt; 2 ans</small></span><strong>{eur(r.oldAmount)}</strong><ArrowRight/></button>)}{!alerts&&<div className="flow-empty"><b>Aucun solde ancien détecté</b></div>}</div></section></div>
+ <section className="treasury-panel"><div className="section-title"><div><h3>Financements par établissement</h3><p>Du panorama agence vers l'investigation établissement.</p></div></div><div className="af-agency-table"><div className="af-agency-row head"><span>Établissement</span><span>UAI</span><span>Soldes identifiés</span><span>&gt; 2 ans</span><span>Positions</span><span/></div>{rows.slice().sort((a,b)=>b.identified-a.identified).map(r=><button className="af-agency-row" key={r.e.id} onClick={()=>onSelect(r.e.id)}><span><Building2 size={16}/><b>{r.e.name}</b></span><span>{r.e.uai||'—'}</span><strong>{eur(r.identified)}</strong><span className={r.oldAmount?'bad':''}>{eur(r.oldAmount)}</span><span>{r.count}</span><ArrowRight size={16}/></button>)}</div></section></div>
 }
