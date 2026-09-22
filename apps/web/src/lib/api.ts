@@ -21,6 +21,10 @@ export const api = {
       json<BudgetResponse>
     ),
   financial: (ets: string) => fetch(`/api/financial/${encodeURIComponent(ets)}`).then(json<FinancialResponse>),
+  financings: (ets: string, exercise: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/financings?exercise=${exercise}`).then(json<any>),
+  createFinancing: (ets: string, body: any) => fetch(`/api/financial/${encodeURIComponent(ets)}/financings`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(json<any>),
+  updateFinancing: (ets: string, id: number, body: any) => fetch(`/api/financial/${encodeURIComponent(ets)}/financings/${id}`, {method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(json<any>),
+  deleteFinancing: (ets: string, id: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/financings/${id}`, {method:'DELETE'}).then(json<any>),
   affectedFinancing: (ets: string, exercise: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/affected-financing?exercise=${exercise}`).then(json<any>),
   manualBalances: (ets: string, exercise?: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/manual-balances${exercise ? `?exercise=${exercise}` : ''}`).then(json<any>),
   saveManualBalance: (ets: string, body: { exercise:number; account:string; label?:string; amount:number }) => fetch(`/api/financial/${encodeURIComponent(ets)}/manual-balances`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) }).then(json<any>),

@@ -413,6 +413,29 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
     }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Suppression impossible'});}
   });
 
+  app.get('/api/financial/:ets/financings', async (req:any, reply:any) => {
+    try {
+      const ets=String(req.params.ets||'').trim(), establishment=await requireEstablishment(req,reply,ets); if(!establishment)return;
+      const entity=String(establishment.opale_entity||ets), exercise=Number(req.query?.exercise||new Date().getFullYear());
+      const rows=(await pool.query(`select f.*,coalesce(json_agg(json_build_object('id',s.id,'kind',s.source_kind,'value',s.source_value,'direction',s.direction,'label',s.label)) filter(where s.id is not null),'[]') sources from financing_records f left join financing_record_sources s on s.financing_id=f.id where upper(f.opale_entity)=upper($1) group by f.id order by f.priority desc,f.expected_end_date nulls last,f.name`,[entity])).rows;
+      const snaps=(await pool.query(`select distinct on(source_type) id,source_type from financial_snapshots where upper(opale_entity)=upper($1) and exercise=$2 and source_type in ('YECBUD','YECBUR') order by source_type,created_at desc`,[entity,exercise])).rows;
+      const ids=Object.fromEntries(snaps.map((x:any)=>[x.source_type,x.id]));
+      const lines=ids.YECBUD||ids.YECBUR?(await pool.query(`select direction,account,accounted,cgr_path from financial_execution_lines where snapshot_id=any($1::bigint[])`,[Object.values(ids)])).rows:[];
+      const calc=(f:any)=>{let expense=0,revenue=0;for(const l of lines){const path=Array.isArray(l.cgr_path)?l.cgr_path:[];const match=(f.sources||[]).some((src:any)=>{if(src.direction!=='BOTH'&&src.direction!==l.direction)return false;if(src.kind==='ACCOUNT')return String(l.account||'').startsWith(String(src.value));return path.some((x:any)=>String(x?.code||'')===String(src.value));});if(match){if(l.direction==='REC')revenue+=Number(l.accounted||0);else expense+=Number(l.accounted||0)}}const consumed=Math.max(0,expense),remaining=Math.max(0,Number(f.notified_amount||0)-consumed),rate=Number(f.notified_amount)>0?Math.min(100,consumed/Number(f.notified_amount)*100):0;return {...f,notified_amount:Number(f.notified_amount||0),consumed,remaining,rate,revenue};};
+      return {exercise,rows:rows.map(calc)};
+    } catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Financements impossibles'});}
+  });
+
+  app.post('/api/financial/:ets/financings', async(req:any,reply:any)=>{
+    const ets=String(req.params.ets||'').trim(), establishment=await requireEstablishment(req,reply,ets);if(!establishment)return;const entity=String(establishment.opale_entity||ets),b=req.body||{};
+    if(!String(b.name||'').trim())return reply.code(400).send({error:'Nom du financement requis'});
+    const c=await pool.connect();try{await c.query('begin');const r=(await c.query(`insert into financing_records(opale_entity,name,description,funder,category,notified_amount,start_date,expected_end_date,priority,status,notes) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,[entity,String(b.name).trim(),b.description||'',b.funder||'',b.category||'AUTRE',Number(b.notifiedAmount||0),b.startDate||null,b.expectedEndDate||null,!!b.priority,b.status||'ACTIVE',b.notes||''])).rows[0];for(const s of b.sources||[])if(s.value)await c.query(`insert into financing_record_sources(financing_id,source_kind,source_value,direction,label) values($1,$2,$3,$4,$5)`,[r.id,s.kind||'ACCOUNT',String(s.value).trim(),s.direction||'BOTH',s.label||'']);await c.query('commit');return r;}catch(e:any){await c.query('rollback');req.log.error(e);return reply.code(400).send({error:e.message||'Création impossible'});}finally{c.release()}
+  });
+  app.put('/api/financial/:ets/financings/:id', async(req:any,reply:any)=>{
+    const ets=String(req.params.ets||'').trim(), establishment=await requireEstablishment(req,reply,ets);if(!establishment)return;const entity=String(establishment.opale_entity||ets),id=Number(req.params.id),b=req.body||{};const c=await pool.connect();try{await c.query('begin');const r=(await c.query(`update financing_records set name=$3,description=$4,funder=$5,category=$6,notified_amount=$7,start_date=$8,expected_end_date=$9,priority=$10,status=$11,notes=$12,closed_at=case when $11='CLOSED' then coalesce(closed_at,current_date) else null end,updated_at=now() where id=$1 and upper(opale_entity)=upper($2) returning *`,[id,entity,b.name,b.description||'',b.funder||'',b.category||'AUTRE',Number(b.notifiedAmount||0),b.startDate||null,b.expectedEndDate||null,!!b.priority,b.status||'ACTIVE',b.notes||''])).rows[0];if(!r){await c.query('rollback');return reply.code(404).send({error:'Financement introuvable'});}await c.query('delete from financing_record_sources where financing_id=$1',[id]);for(const s of b.sources||[])if(s.value)await c.query(`insert into financing_record_sources(financing_id,source_kind,source_value,direction,label) values($1,$2,$3,$4,$5)`,[id,s.kind||'ACCOUNT',String(s.value).trim(),s.direction||'BOTH',s.label||'']);await c.query('commit');return r;}catch(e:any){await c.query('rollback');return reply.code(400).send({error:e.message||'Modification impossible'});}finally{c.release()}
+  });
+  app.delete('/api/financial/:ets/financings/:id', async(req:any,reply:any)=>{const ets=String(req.params.ets||''), establishment=await requireEstablishment(req,reply,ets);if(!establishment)return;await pool.query('delete from financing_records where id=$1 and upper(opale_entity)=upper($2)',[Number(req.params.id),String(establishment.opale_entity||ets)]);return {ok:true};});
+
   app.get('/api/financial/:ets/affected-financing', async (req: any, reply: any) => {
     try {
       const ets = String(req.params.ets || '').trim(), establishment = await requireEstablishment(req, reply, ets);
