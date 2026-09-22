@@ -40,7 +40,7 @@ export function ImportModal({
               ))}
           </select>
           <input name="file" type="file" accept=".lis,.csv,.xlsx" required />
-          <label>Exercice YECBUD / YECBUR<</label>
+          <label>Exercice YECBUD / YECBUR</label>
           <select name="exercise" defaultValue={new Date().getFullYear()}>
             {Array.from({ length: 8 }, (_, i) => new Date().getFullYear() + 1 - i).map((y) => (
               <option key={y} value={y}>
