@@ -302,7 +302,7 @@ export function FinancialAnalysisView({ current, initialTab = 'overview' }: { cu
         <small>
           {srh
             ? `${eur(srh.revenues)} de recettes · ${eur(srh.expenses)} de dépenses`
-            : 'YCONSDEP + YCONSREC avec service SRH'}
+            : 'YECBUD + YECBUR avec service SRH'}
         </small>
         <button onClick={() => setFinancialTab('srh')}>
           Voir le SRH <ChevronRight size={14} />
@@ -350,11 +350,11 @@ export function FinancialAnalysisView({ current, initialTab = 'overview' }: { cu
                   </div>
                   <p className="muted">
                     Dépenses : {eur(depReal)} / {eur(depBudget)} · Recettes : {eur(recReal)} / {eur(recBudget)} · source{' '}
-                    {financial?.expenses ? 'YCONSDEP / YCONSREC' : 'Budget'}
+                    {financial?.expenses ? 'YECBUD / YECBUR' : 'Budget'}
                   </p>
                 </div>
               ) : (
-                <p className="muted">Importe YCONSDEP et YCONSREC pour alimenter cette brique.</p>
+                <p className="muted">Importe YECBUD et YECBUR pour alimenter cette brique.</p>
               )}
             </section>
             <section className="financial-card financial-debt">
@@ -525,7 +525,7 @@ export function FinancialAnalysisView({ current, initialTab = 'overview' }: { cu
           </div>
           <div className="financial-source-note">
             <span>Aucune donnée financière n'est simulée : une valeur absente reste explicitement non alimentée.</span>
-            <span>Sources : YFDR · EBLC · YCONSDEP · YCONSREC · YBALAC · YBALAF · 5151</span>
+            <span>Sources : YFDR · EBLC · YECBUD · YECBUR · YBALAC · YBALAF · 5151</span>
           </div>
         </>
       )}
@@ -550,7 +550,7 @@ export function FinancialAnalysisView({ current, initialTab = 'overview' }: { cu
                     : srh.result > 0
                       ? 'L’excédent peut consolider le fonds de roulement ou être identifié comme réserve SRH pour absorber un exercice futur déficitaire.'
                       : 'Recettes et dépenses réalisées sont à l’équilibre.'
-                  : 'Importe YCONSDEP et YCONSREC : Vigie isolera les lignes dont le service est SRH.'}
+                  : 'Importe YECBUD et YECBUR : Vigie isolera les lignes dont le service est SRH.'}
               </p>
             </div>
             <strong>{srh ? eur(srh.result) : '—'}</strong>
@@ -559,17 +559,17 @@ export function FinancialAnalysisView({ current, initialTab = 'overview' }: { cu
             <article>
               <span>Recettes réalisées</span>
               <b>{srh ? eur(srh.revenues) : '—'}</b>
-              <small>YCONSREC · service SRH</small>
+              <small>YECBUR · service SRH</small>
             </article>
             <article>
               <span>Dépenses réalisées</span>
               <b>{srh ? eur(srh.expenses) : '—'}</b>
-              <small>YCONSDEP · service SRH</small>
+              <small>YECBUD · service SRH</small>
             </article>
             <article>
               <span>Achats de denrées</span>
               <b>{srh ? eur(srh.foodExpenses) : '—'}</b>
-              <small>YCONSDEP · compte 601100</small>
+              <small>YECBUD · compte 601100</small>
             </article>
             <article className={(srh?.result ?? 0) < 0 ? 'attention' : ''}>
               <span>Résultat SRH réalisé</span>
@@ -653,8 +653,8 @@ export function FinancialAnalysisView({ current, initialTab = 'overview' }: { cu
                 <div className="srh-food-missing">
                   <b>Crédit nourriture non identifié</b>
                   <p>
-                    Le réalisé SRH est bien disponible, mais aucune ligne du YCONSDEP importé n’est actuellement
-                    reconnue au compte 601100. Réimporte le YCONSDEP après cette mise à jour : Vigie lit désormais aussi
+                    Le réalisé SRH est bien disponible, mais aucune ligne du YECBUD importé n’est actuellement
+                    reconnue au compte 601100. Réimporte le YECBUD après cette mise à jour : Vigie lit désormais aussi
                     la colonne compte à sa position Op@le standard.
                   </p>
                 </div>
@@ -694,11 +694,11 @@ export function FinancialAnalysisView({ current, initialTab = 'overview' }: { cu
           <section className="financial-card srh-data-needed">
             <h3>Données nécessaires</h3>
             <div>
-              <b>YCONSREC</b>
+              <b>YECBUR</b>
               <span>Recettes réalisées du service SRH</span>
             </div>
             <div>
-              <b>YCONSDEP</b>
+              <b>YECBUD</b>
               <span>Dépenses SRH ; compte 601100 pour les achats de denrées et le crédit nourriture</span>
             </div>
             <div>

@@ -393,8 +393,8 @@ export async function detectFinancialXlsx(buf: Buffer) {
       poste = headerIndex(h, 'Poste de niveau 1');
     const first = rows.slice(cons + 1).find((r) => cellText(r[poste]));
     const dir = cellText(first?.[poste]).toUpperCase();
-    if (dir === 'DEP') return 'YCONSDEP';
-    if (dir === 'REC') return 'YCONSREC';
+    if (dir === 'DEP') return 'YECBUD';
+    if (dir === 'REC') return 'YECBUR';
   }
   const aged = findHeaderRow(rows, ['Etablissement', 'Pièce', 'Tiers', 'Montant en référence colonne 15']);
   if (aged >= 0) {
@@ -416,7 +416,7 @@ export async function parseFinancialXlsx(buf: Buffer, type: string, contextEntit
   const required =
     type === 'EBLC'
       ? ['Compte', 'Solde débit', 'Solde crédit']
-      : type.startsWith('YCONS')
+      : ['YCONSDEP', 'YCONSREC', 'YECBUD', 'YECBUR'].includes(type)
         ? ['Etablissement', 'CGR de niveau 1', 'Poste de niveau 1', 'Montant colonne 1']
         : ['Etablissement', 'Pièce', 'Tiers', 'Montant en référence colonne 15'];
   const hi = findHeaderRow(rows, required);
@@ -464,7 +464,7 @@ export async function parseFinancialXlsx(buf: Buffer, type: string, contextEntit
         .filter((x) => /^\d{3,}/.test(x.account))
     };
   }
-  if (type.startsWith('YCONS')) {
+  if (['YCONSDEP', 'YCONSREC', 'YECBUD', 'YECBUR'].includes(type)) {
     const entity =
       cellText(first[idx('Etablissement si un seul sélectionné')]) ||
       cellText(first[idx('Etablissement')]) ||
@@ -491,7 +491,7 @@ export async function parseFinancialXlsx(buf: Buffer, type: string, contextEntit
       rows: data
         .map((r, i) => ({
           line: i + hi + 2,
-          direction: type === 'YCONSDEP' ? 'DEP' : 'REC',
+          direction: ['YCONSDEP', 'YECBUD'].includes(type) ? 'DEP' : 'REC',
           section: cellText(r[4]),
           serviceGroup: cellText(r[7]),
           service: cellText(r[10]),

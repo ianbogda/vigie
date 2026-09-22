@@ -120,7 +120,7 @@ export class ImportRepository {
         ])
       );
     }
-    if (type.startsWith('YCONS')) {
+    if (['YCONSDEP', 'YCONSREC', 'YECBUD', 'YECBUR'].includes(type)) {
       return insertMany(
         client,
         'financial_execution_lines',

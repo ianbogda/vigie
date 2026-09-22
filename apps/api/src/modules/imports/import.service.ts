@@ -94,7 +94,7 @@ export class ImportService {
       if (csvType === 'clca') return this.importClca(file);
     }
     throw new ImportValidationError(
-      'Type Op@le non reconnu. Formats gérés : balance .lis, budget .lis/.xlsx, EBLC .xlsx, YCONSDEP/YCONSREC .xlsx, YBALAC/YBALAF .xlsx, données comptables Op@le .csv (classes 1 à 8), YGPIE1 .csv, CLCA .csv et FDR .csv.'
+      'Type Op@le non reconnu. Formats gérés : balance .lis, budget .lis/.xlsx, EBLC .xlsx, YECBUD/YECBUR .xlsx (anciens YCONSDEP/YCONSREC compatibles), YBALAC/YBALAF .xlsx, données comptables Op@le .csv (classes 1 à 8), YGPIE1 .csv, CLCA .csv et FDR .csv.'
     );
   }
 
@@ -169,7 +169,7 @@ export class ImportService {
     }
 
     const parsed: any = await parseFinancialXlsx(file.buffer, financialType, contextEntity);
-    if (financialType.startsWith('YCONS')) {
+    if (['YCONSDEP', 'YCONSREC', 'YECBUD', 'YECBUR'].includes(financialType)) {
       if (!Number.isInteger(requestedExercise) || requestedExercise < 2000 || requestedExercise > 2100) {
         throw new ImportValidationError(`${financialType} : choisissez l’exercice concerné avant l’import.`);
       }

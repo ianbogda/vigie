@@ -63,8 +63,9 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
       const establishment = await requireEstablishment(req, reply, ets);
       if (!establishment) return;
       const entity = String(establishment.opale_entity || ets);
-      const latest = async (type: string) =>
-        (
+      const latest = async (type: string | string[]) => {
+        const types = Array.isArray(type) ? type : [type];
+        return (
           await pool.query(
             `select * from financial_snapshots where upper(opale_entity)=upper($1) and source_type=$2 order by case when source_type='EBLC' then exercise end desc nulls last, case when source_type='EBLC' and coalesce(period_end,period) ~ '^(0[1-9]|1[0-2])/20[0-9]{2}$' then split_part(coalesce(period_end,period),'/',1)::int end desc nulls last, snapshot_date desc,created_at desc limit 1`,
             [entity, type]
@@ -72,8 +73,8 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
         ).rows[0] || null;
       const [eblc, depSnap, recSnap, clientSnap, supplierSnap] = await Promise.all([
         latest('EBLC'),
-        latest('YCONSDEP'),
-        latest('YCONSREC'),
+        latest(['YECBUD', 'YCONSDEP']),
+        latest(['YECBUR', 'YCONSREC']),
         latest('YBALAC'),
         latest('YBALAF')
       ]);
@@ -314,14 +315,14 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
       }
       indicatorHistory.sort((a: any, b: any) => a.exercise - b.exercise);
       const executionHistory: any = { expenses: [], revenues: [] };
-      for (const [sourceType, key] of [
-        ['YCONSDEP', 'expenses'],
-        ['YCONSREC', 'revenues']
+      for (const [sourceTypes, key] of [
+        [['YECBUD', 'YCONSDEP'], 'expenses'],
+        [['YECBUR', 'YCONSREC'], 'revenues']
       ] as const) {
         const snaps = (
           await pool.query(
-            `select id,exercise,snapshot_date,period,period_end,created_at from financial_snapshots where upper(opale_entity)=upper($1) and source_type=$2 and exercise is not null order by exercise,snapshot_date,created_at`,
-            [entity, sourceType]
+            `select id,exercise,snapshot_date,period,period_end,created_at from financial_snapshots where upper(opale_entity)=upper($1) and source_type=any($2::text[]) and exercise is not null order by exercise,snapshot_date,created_at`,
+            [entity, sourceTypes]
           )
         ).rows;
         for (const snap of snaps) {
@@ -343,6 +344,8 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
         establishment: { id: establishment.id, name: establishment.name, uai: establishment.uai, opaleEntity: entity },
         sources: {
           EBLC: eblc?.snapshot_date || null,
+          YECBUD: depSnap?.snapshot_date || null,
+          YECBUR: recSnap?.snapshot_date || null,
           YCONSDEP: depSnap?.snapshot_date || null,
           YCONSREC: recSnap?.snapshot_date || null,
           YBALAC: clientSnap?.snapshot_date || null,

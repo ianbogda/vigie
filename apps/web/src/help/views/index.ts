@@ -19,7 +19,7 @@ export const VIEW_HELP: Record<string, ViewHelpSpec> = {
     sources: [
       { name: 'YFDR', format: 'CSV', freshness: 'À actualiser après clôture ou nouvelle situation disponible.' },
       { name: 'EBLC', format: 'XLSX', freshness: 'Utiliser une situation datée et identifier l’exercice.' },
-      { name: 'YCONSDEP / YCONSREC', format: 'XLSX' },
+      { name: 'YECBUD / YECBUR', format: 'XLSX' },
       'YBALAC',
       'YBALAF',
       {
@@ -88,7 +88,7 @@ export const VIEW_HELP: Record<string, ViewHelpSpec> = {
       'Examiner ensuite les comptes et fournisseurs qui expliquent les concentrations ou accélérations.'
     ],
     sources: [
-      { name: 'YCONSDEP', format: 'XLSX', freshness: 'À actualiser selon le rythme de supervision souhaité.' },
+      { name: 'YECBUD', format: 'XLSX', freshness: 'À actualiser selon le rythme de supervision souhaité.' },
       'YBALAF'
     ],
     vigilance: [
@@ -107,7 +107,7 @@ export const VIEW_HELP: Record<string, ViewHelpSpec> = {
     purpose:
       'Piloter l’exécution des recettes et repérer les créances dont le recouvrement ou l’ancienneté nécessite une attention.',
     requiredData: [
-      { label: 'Recettes', source: 'YCONSREC', note: 'exercice sélectionné' },
+      { label: 'Recettes', source: 'YECBUR', note: 'exercice sélectionné' },
       { label: 'Évolution mensuelle', source: 'CLCA', note: 'si disponible' },
       { label: 'Créances', source: 'YBALAC' },
       { label: 'TnR', source: 'EBLC', note: 'comptes 411–418 / compte 70' }
@@ -118,7 +118,7 @@ export const VIEW_HELP: Record<string, ViewHelpSpec> = {
       'Mettre enfin le TnR en regard du volume de recettes et de l’ancienneté YBALAC.'
     ],
     sources: [
-      { name: 'YCONSREC', format: 'XLSX' },
+      { name: 'YECBUR', format: 'XLSX' },
       'YBALAC',
       { name: 'EBLC', format: 'XLSX', note: 'Nécessaire au TnR.' }
     ],

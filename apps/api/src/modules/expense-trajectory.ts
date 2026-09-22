@@ -49,7 +49,7 @@ export async function buildExpenseTrajectory(pool: Pool, context: ExpenseTraject
       `select id,to_char(snapshot_date,'YYYY-MM-DD') snapshot_date,exercise
        from financial_snapshots
        where upper(opale_entity)=upper($1)
-         and source_type='YCONSDEP'
+         and source_type in ('YECBUD','YCONSDEP')
        order by coalesce(exercise,extract(year from snapshot_date)::int) desc,
                 snapshot_date desc,created_at desc,id desc
        limit 1`,
@@ -136,7 +136,7 @@ export async function buildExpenseTrajectory(pool: Pool, context: ExpenseTraject
 
   return {
     mode: 'DEP' as const,
-    source: 'CLCA+YCONSDEP' as const,
+    source: 'CLCA+YECBUD' as const,
     exercise,
     snapshotDate,
     actual,
