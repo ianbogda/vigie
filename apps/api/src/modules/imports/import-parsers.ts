@@ -472,40 +472,67 @@ export async function parseFinancialXlsx(buf: Buffer, type: string, contextEntit
     const uai = cellText(first[idx('Intitulé réduit')]);
     const dateText = cellText(first[idx('Date')]);
     const snapshotDate = parseFrDate(dateText) || new Date().toISOString().slice(0, 10);
-    const exercise = new Date(snapshotDate).getFullYear();
-    // Les éditions YCONS ne nomment pas toutes la dimension comptable de la même manière.
-    // Dans l'export standard Op@le, les dimensions sont organisées par blocs de 3 colonnes :
-    // section (4), groupe de service (7), service (10), domaine (13), activité (16), compte (19).
-    // On privilégie toutefois un en-tête explicite lorsqu'il existe.
-    const accountCandidates = ['Compte', 'Compte budgétaire', 'Compte de niveau 1', 'Compte niveau 1'];
-    const explicitAccount = accountCandidates.map(idx).find((i) => i >= 0) ?? -1;
-    const account = explicitAccount >= 0 ? explicitAccount : 19;
-    const amount = idx('Montant colonne 1');
+    const amountStart = idx('Montant colonne 1');
+    const metaLabelStart = idx('Colonne 1');
+    const makePath = (r: any[], prefix: 'CGR' | 'Poste') => {
+      const out: any[] = [];
+      for (let level = 1; level <= 10; level++) {
+        const code = idx(`${prefix} de niveau ${level}`);
+        const combined = idx(`${prefix} et intitulé réduit ${level}`);
+        if (code < 0) continue;
+        const value = cellText(r[code]);
+        if (!value || value === '-') continue;
+        const label = combined >= 0 ? cellText(r[combined]).replace(new RegExp(`^${value}\\s*-?\\s*`), '') : '';
+        out.push({ level, code: value, label, combined: combined >= 0 ? cellText(r[combined]) : value });
+      }
+      return out;
+    };
+    const amountLabels: Record<string, string> = {};
+    for (let i = 0; i < 13; i++) {
+      const label = metaLabelStart >= 0 ? cellText(first[metaLabelStart + i]) : '';
+      if (label) amountLabels[String(i + 1)] = label;
+    }
+    const canonical = type === 'YCONSDEP' ? 'YECBUD' : type === 'YCONSREC' ? 'YECBUR' : type;
     return {
-      type,
+      type: canonical,
       entity,
       uai,
       snapshotDate,
-      exercise,
+      exercise: new Date(snapshotDate).getFullYear(),
       period: null,
       rows: data
-        .map((r, i) => ({
-          line: i + hi + 2,
-          direction: ['YCONSDEP', 'YECBUD'].includes(type) ? 'DEP' : 'REC',
-          section: cellText(r[4]),
-          serviceGroup: cellText(r[7]),
-          service: cellText(r[10]),
-          domain: cellText(r[13]),
-          activity: cellText(r[16]),
-          account: cellText(r[account]),
-          label: cellText(r[account + 1]),
-          budget: cellNum(r[amount]),
-          committed: cellNum(r[amount + 1]),
-          accounted: cellNum(r[amount + 2]),
-          inProgress: cellNum(r[amount + 3]),
-          available: cellNum(r[amount + 4])
-        }))
-        .filter((x) => x.service || x.account)
+        .map((r, i) => {
+          const cgrPath = makePath(r, 'CGR');
+          const postPath = makePath(r, 'Poste');
+          const extraAmounts: Record<string, number> = {};
+          for (let j = 5; j < 13; j++) {
+            const value = cellNum(r[amountStart + j]);
+            if (value) extraAmounts[String(j + 1)] = value;
+          }
+          const leafCgr = cgrPath[cgrPath.length - 1];
+          const accountIndex = idx('Compte');
+          return {
+            line: i + hi + 2,
+            direction: canonical === 'YECBUD' ? 'DEP' : 'REC',
+            section: cgrPath[1]?.code || null,
+            serviceGroup: cgrPath[2]?.code || null,
+            service: cgrPath[3]?.code || null,
+            domain: cgrPath[4]?.code || null,
+            activity: leafCgr?.code || null,
+            account: accountIndex >= 0 ? cellText(r[accountIndex]) : '',
+            label: accountIndex >= 0 ? cellText(r[accountIndex + 1]) : '',
+            budget: cellNum(r[amountStart]),
+            committed: cellNum(r[amountStart + 1]),
+            accounted: cellNum(r[amountStart + 2]),
+            inProgress: cellNum(r[amountStart + 3]),
+            available: cellNum(r[amountStart + 4]),
+            cgrPath,
+            postPath,
+            amountLabels,
+            extraAmounts
+          };
+        })
+        .filter((x) => x.cgrPath.length || x.postPath.length || x.account)
     };
   }
   const entity = cellText(first[idx('Etablissement')]) || contextEntity;

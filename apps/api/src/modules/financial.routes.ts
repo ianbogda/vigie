@@ -369,6 +369,57 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
     }
   });
 
+  app.get('/api/financial/:ets/affected-financing', async (req: any, reply: any) => {
+    try {
+      const ets = String(req.params.ets || '').trim(), establishment = await requireEstablishment(req, reply, ets);
+      if (!establishment) return;
+      const entity = String(establishment.opale_entity || ets);
+      const exercise = Number(req.query?.exercise || new Date().getFullYear());
+      const years = Array.from({ length: 5 }, (_, i) => exercise - 4 + i);
+      const snapshots = (await pool.query(
+        `select distinct on (exercise,source_type) id,exercise,source_type,snapshot_date,source_filename,row_count
+           from financial_snapshots
+          where upper(opale_entity)=upper($1) and exercise=any($2::int[])
+            and source_type in ('YECBUD','YECBUR','EBLC')
+          order by exercise,source_type,created_at desc`, [entity, years]
+      )).rows;
+      const completeness = years.map(year => {
+        const by = Object.fromEntries(snapshots.filter((x:any)=>Number(x.exercise)===year).map((x:any)=>[x.source_type,x]));
+        return { exercise: year, YECBUD: by.YECBUD || null, YECBUR: by.YECBUR || null, EBLC: by.EBLC || null,
+          complete: !!(by.YECBUD && by.YECBUR && by.EBLC) };
+      });
+      const dep = snapshots.find((x:any)=>Number(x.exercise)===exercise && x.source_type==='YECBUD');
+      const rec = snapshots.find((x:any)=>Number(x.exercise)===exercise && x.source_type==='YECBUR');
+      const read = async (snap:any) => snap ? (await pool.query(
+        `select line_no,direction,section,service_group,service,domain,activity,account,label,budget,committed,accounted,in_progress,available,cgr_path,post_path,amount_labels
+           from financial_execution_lines where snapshot_id=$1 order by line_no`, [snap.id]
+      )).rows : [];
+      const [expenses, revenues] = await Promise.all([read(dep), read(rec)]);
+      const keyOf = (r:any) => {
+        const p = Array.isArray(r.cgr_path) ? r.cgr_path : [];
+        const leaf = p[p.length - 1];
+        return String(leaf?.code || r.activity || r.domain || r.service || 'NON_QUALIFIE');
+      };
+      const labelOf = (r:any) => {
+        const p = Array.isArray(r.cgr_path) ? r.cgr_path : [];
+        const leaf = p[p.length - 1];
+        return String(leaf?.label || leaf?.combined || r.activity || r.domain || 'À qualifier');
+      };
+      const map = new Map<string, any>();
+      for (const r of [...revenues, ...expenses]) {
+        const key = keyOf(r), x = map.get(key) || { key, label: labelOf(r), revenue: 0, expense: 0, cgrPath: r.cgr_path || [] };
+        if (r.direction === 'REC') x.revenue += Number(r.accounted || 0); else x.expense += Number(r.accounted || 0);
+        map.set(key, x);
+      }
+      const operations = [...map.values()].map((x:any)=>({ ...x, balance: x.revenue - x.expense }))
+        .filter((x:any)=>Math.abs(x.revenue)+Math.abs(x.expense)>.005)
+        .sort((a:any,b:any)=>Math.abs(b.balance)-Math.abs(a.balance));
+      return { establishment: { id: establishment.id, name: establishment.name, uai: establishment.uai, opaleEntity: entity }, exercise,
+        completeness, sources: { YECBUD: dep || null, YECBUR: rec || null }, operations,
+        totals: { revenue: operations.reduce((s:number,x:any)=>s+x.revenue,0), expense: operations.reduce((s:number,x:any)=>s+x.expense,0), balance: operations.reduce((s:number,x:any)=>s+x.balance,0) } };
+    } catch (e:any) { req.log.error(e); return reply.code(400).send({ error: e.message || 'Financements affectés impossibles' }); }
+  });
+
   app.get('/api/financial/:ets/fdr-analysis', async (req: any, reply: any) => {
     try {
       const ets = String(req.params.ets || '').trim(),

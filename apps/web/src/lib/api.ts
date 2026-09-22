@@ -21,6 +21,7 @@ export const api = {
       json<BudgetResponse>
     ),
   financial: (ets: string) => fetch(`/api/financial/${encodeURIComponent(ets)}`).then(json<FinancialResponse>),
+  affectedFinancing: (ets: string, exercise: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/affected-financing?exercise=${exercise}`).then(json<any>),
   financialFdrAnalysis: (ets: string, exercise: number) =>
     fetch(`/api/financial/${encodeURIComponent(ets)}/fdr-analysis?exercise=${exercise}`).then(
       json<FdrAnalysisResponse>

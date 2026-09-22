@@ -181,10 +181,14 @@ export class ImportService {
       );
     }
     return withTransaction(this.pool, async (client) => {
+      // Un seul export de chaque type par EPLE et exercice : un réimport remplace le précédent.
+      if (['YECBUD', 'YECBUR'].includes(parsed.type || financialType)) {
+        await this.repository.replaceFinancialSnapshot(client, parsed.entity || contextEntity, parsed.type || financialType, parsed.exercise);
+      }
       const snapshot = await this.repository.createFinancialSnapshot(client, [
         target.name,
         parsed.entity || contextEntity,
-        financialType,
+        parsed.type || financialType,
         parsed.snapshotDate,
         parsed.exercise,
         parsed.period,
@@ -194,8 +198,8 @@ export class ImportService {
         file.filename,
         parsed.rows.length
       ]);
-      await this.repository.insertFinancialRows(client, snapshot.id, financialType, parsed.rows);
-      return { ok: true, type: financialType.toLowerCase(), snapshot, control: { importedRows: parsed.rows.length } };
+      await this.repository.insertFinancialRows(client, snapshot.id, parsed.type || financialType, parsed.rows);
+      return { ok: true, type: String(parsed.type || financialType).toLowerCase(), snapshot, control: { importedRows: parsed.rows.length } };
     });
   }
 

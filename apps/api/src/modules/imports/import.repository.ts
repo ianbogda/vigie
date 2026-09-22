@@ -53,6 +53,13 @@ export class ImportRepository {
     );
   }
 
+  async replaceFinancialSnapshot(client: PoolClient, entity: string, sourceType: string, exercise: number) {
+    await client.query(
+      'delete from financial_snapshots where upper(opale_entity)=upper($1) and source_type=$2 and exercise=$3',
+      [entity, sourceType, exercise]
+    );
+  }
+
   async createBudgetSnapshot(client: PoolClient, values: readonly unknown[]) {
     return (
       await client.query(
@@ -139,7 +146,11 @@ export class ImportRepository {
           'committed',
           'accounted',
           'in_progress',
-          'available'
+          'available',
+          'cgr_path',
+          'post_path',
+          'amount_labels',
+          'extra_amounts'
         ],
         rows.map((r) => [
           snapshotId,
@@ -156,7 +167,11 @@ export class ImportRepository {
           r.committed,
           r.accounted,
           r.inProgress,
-          r.available
+          r.available,
+          JSON.stringify(r.cgrPath || []),
+          JSON.stringify(r.postPath || []),
+          JSON.stringify(r.amountLabels || {}),
+          JSON.stringify(r.extraAmounts || {})
         ])
       );
     }
