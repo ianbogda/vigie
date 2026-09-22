@@ -7,6 +7,7 @@ import { RiskMasteryView } from './domain/risk-mastery-view';
 import { AgedView, AgencyAgedView } from './domain/aged-views';
 import { AgencyTreasuryView, TreasuryView } from './domain/treasury-views';
 import { AffectedFinancingView, AgencyAffectedFinancingView } from './domain/affected-financing-view';
+import { AccountingQualityView } from './domain/accounting-quality-view';
 
 type DomainViewProps = {
   title: string;
@@ -17,6 +18,7 @@ type DomainViewProps = {
 
 /** Routes a business domain to its dedicated view without embedding domain logic. */
 export function DomainView({ title, current, all, onSelect }: DomainViewProps) {
+  if (title === 'Qualité comptable') return <AccountingQualityView current={current} all={all} onSelect={onSelect} />;
   if (title === 'Maîtrise des risques') return <RiskMasteryView current={current} all={all} onSelect={onSelect} />;
   if (title === 'Dépenses' || title === 'Dépenses & engagements') return <FlowView current={current} all={all} onSelect={onSelect} kind="expense" />;
   if (title === 'Recettes') return <FlowView current={current} all={all} onSelect={onSelect} kind="revenue" />;
