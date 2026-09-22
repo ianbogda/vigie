@@ -22,6 +22,10 @@ export const api = {
     ),
   financial: (ets: string) => fetch(`/api/financial/${encodeURIComponent(ets)}`).then(json<FinancialResponse>),
   affectedFinancing: (ets: string, exercise: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/affected-financing?exercise=${exercise}`).then(json<any>),
+  manualBalances: (ets: string, exercise?: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/manual-balances${exercise ? `?exercise=${exercise}` : ''}`).then(json<any>),
+  saveManualBalance: (ets: string, body: { exercise:number; account:string; label?:string; amount:number }) => fetch(`/api/financial/${encodeURIComponent(ets)}/manual-balances`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) }).then(json<any>),
+  deleteManualBalance: (ets: string, id: number) => fetch(`/api/financial/${encodeURIComponent(ets)}/manual-balances/${id}`, { method:'DELETE' }).then(json<any>),
+  accountLabel: (ets: string, account: string) => fetch(`/api/financial/${encodeURIComponent(ets)}/account-label?account=${encodeURIComponent(account)}`).then(json<any>),
   financialFdrAnalysis: (ets: string, exercise: number) =>
     fetch(`/api/financial/${encodeURIComponent(ets)}/fdr-analysis?exercise=${exercise}`).then(
       json<FdrAnalysisResponse>

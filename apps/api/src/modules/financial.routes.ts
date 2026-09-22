@@ -369,6 +369,50 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
     }
   });
 
+  app.get('/api/financial/:ets/manual-balances', async (req: any, reply: any) => {
+    try {
+      const ets=String(req.params.ets||'').trim(), establishment=await requireEstablishment(req,reply,ets); if(!establishment)return;
+      const entity=String(establishment.opale_entity||ets), exercise=req.query?.exercise?Number(req.query.exercise):null;
+      const rows=(await pool.query(`select id,exercise,account,label,amount,created_at,updated_at from financial_manual_balances where upper(opale_entity)=upper($1) ${exercise?'and exercise=$2':''} order by exercise desc,account`, exercise?[entity,exercise]:[entity])).rows;
+      return { establishment:{id:establishment.id,name:establishment.name,uai:establishment.uai,opaleEntity:entity}, rows:rows.map((r:any)=>({...r,exercise:Number(r.exercise),amount:Number(r.amount||0)})) };
+    } catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Lecture des soldes manuels impossible'});}
+  });
+
+  app.get('/api/financial/:ets/account-label', async (req:any,reply:any)=>{
+    try{
+      const ets=String(req.params.ets||'').trim(), establishment=await requireEstablishment(req,reply,ets); if(!establishment)return;
+      const entity=String(establishment.opale_entity||ets), account=String(req.query?.account||'').trim(); if(!account)return {label:''};
+      const manual=(await pool.query(`select label from financial_manual_balances where upper(opale_entity)=upper($1) and account=$2 and label<>'' order by exercise desc,updated_at desc limit 1`,[entity,account])).rows[0];
+      if(manual?.label)return {label:manual.label,source:'manual'};
+      const eblc=(await pool.query(`select l.label from financial_balance_lines l join financial_snapshots s on s.id=l.snapshot_id where upper(s.opale_entity)=upper($1) and s.source_type='EBLC' and l.account=$2 and coalesce(l.label,'')<>'' order by s.exercise desc nulls last,s.snapshot_date desc,s.created_at desc limit 1`,[entity,account])).rows[0];
+      return {label:eblc?.label||'',source:eblc?'EBLC':null};
+    }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Recherche de libellé impossible'});}
+  });
+
+  app.post('/api/financial/:ets/manual-balances', async (req:any,reply:any)=>{
+    try{
+      const ets=String(req.params.ets||'').trim(), establishment=await requireEstablishment(req,reply,ets); if(!establishment)return;
+      const entity=String(establishment.opale_entity||ets), exercise=Number(req.body?.exercise), account=String(req.body?.account||'').trim(), amount=Number(req.body?.amount), requestedLabel=String(req.body?.label||'').trim();
+      if(!Number.isInteger(exercise)||exercise<2000||exercise>2100)return reply.code(400).send({error:'Exercice invalide'});
+      if(!/^\d{3,12}[A-Za-z0-9]*$/.test(account))return reply.code(400).send({error:'Compte invalide'});
+      if(!Number.isFinite(amount))return reply.code(400).send({error:'Montant invalide'});
+      let label=requestedLabel;
+      if(!label){
+        const q=(await pool.query(`select label from financial_balance_lines l join financial_snapshots s on s.id=l.snapshot_id where upper(s.opale_entity)=upper($1) and l.account=$2 and coalesce(l.label,'')<>'' order by s.exercise desc nulls last,s.snapshot_date desc,s.created_at desc limit 1`,[entity,account])).rows[0]; label=String(q?.label||'');
+      }
+      const row=(await pool.query(`insert into financial_manual_balances(opale_entity,exercise,account,label,amount) values($1,$2,$3,$4,$5) on conflict(opale_entity,exercise,account) do update set label=excluded.label,amount=excluded.amount,updated_at=now() returning *`,[entity,exercise,account,label,amount])).rows[0];
+      return {ok:true,row:{...row,exercise:Number(row.exercise),amount:Number(row.amount)}};
+    }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Enregistrement impossible'});}
+  });
+
+  app.delete('/api/financial/:ets/manual-balances/:id', async(req:any,reply:any)=>{
+    try{
+      const ets=String(req.params.ets||'').trim(), establishment=await requireEstablishment(req,reply,ets); if(!establishment)return;
+      const entity=String(establishment.opale_entity||ets), id=Number(req.params.id);
+      await pool.query(`delete from financial_manual_balances where id=$1 and upper(opale_entity)=upper($2)`,[id,entity]); return {ok:true};
+    }catch(e:any){req.log.error(e);return reply.code(400).send({error:e.message||'Suppression impossible'});}
+  });
+
   app.get('/api/financial/:ets/affected-financing', async (req: any, reply: any) => {
     try {
       const ets = String(req.params.ets || '').trim(), establishment = await requireEstablishment(req, reply, ets);
@@ -383,13 +427,24 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
             and source_type in ('YECBUD','YECBUR','EBLC')
           order by exercise,source_type,created_at desc`, [entity, years]
       )).rows;
+      const manualRows = (await pool.query(
+        `select id,exercise,account,label,amount from financial_manual_balances where upper(opale_entity)=upper($1) and exercise=any($2::int[]) order by exercise,account`, [entity, years]
+      )).rows.map((r:any)=>({...r,exercise:Number(r.exercise),amount:Number(r.amount||0)}));
       const completeness = years.map(year => {
         const by = Object.fromEntries(snapshots.filter((x:any)=>Number(x.exercise)===year).map((x:any)=>[x.source_type,x]));
-        return { exercise: year, YECBUD: by.YECBUD || null, YECBUR: by.YECBUR || null, EBLC: by.EBLC || null,
-          complete: !!(by.YECBUD && by.YECBUR && by.EBLC) };
+        const manual = manualRows.filter((x:any)=>x.exercise===year);
+        return { exercise: year, YECBUD: by.YECBUD || null, YECBUR: by.YECBUR || null, EBLC: by.EBLC || null, manualBalanceCount: manual.length,
+          balanceAvailable: !!by.EBLC || manual.length>0, complete: !!(by.YECBUD && by.YECBUR && (by.EBLC || manual.length>0)) };
       });
       const dep = snapshots.find((x:any)=>Number(x.exercise)===exercise && x.source_type==='YECBUD');
       const rec = snapshots.find((x:any)=>Number(x.exercise)===exercise && x.source_type==='YECBUR');
+      const eblcCurrent = snapshots.find((x:any)=>Number(x.exercise)===exercise && x.source_type==='EBLC');
+      let balancePositions:any[]=[];
+      if(eblcCurrent){
+        balancePositions=(await pool.query(`select account,max(coalesce(label,'')) label,sum(debit-credit) balance from financial_balance_lines where snapshot_id=$1 group by account order by account`,[eblcCurrent.id])).rows.map((r:any)=>({account:r.account,label:r.label,balance:Number(r.balance||0),source:'EBLC'}));
+      } else {
+        balancePositions=manualRows.filter((x:any)=>x.exercise===exercise).map((r:any)=>({id:r.id,account:r.account,label:r.label,balance:Number(r.amount||0),source:'MANUAL'}));
+      }
       const read = async (snap:any) => snap ? (await pool.query(
         `select line_no,direction,section,service_group,service,domain,activity,account,label,budget,committed,accounted,in_progress,available,cgr_path,post_path,amount_labels
            from financial_execution_lines where snapshot_id=$1 order by line_no`, [snap.id]
@@ -415,7 +470,7 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
         .filter((x:any)=>Math.abs(x.revenue)+Math.abs(x.expense)>.005)
         .sort((a:any,b:any)=>Math.abs(b.balance)-Math.abs(a.balance));
       return { establishment: { id: establishment.id, name: establishment.name, uai: establishment.uai, opaleEntity: entity }, exercise,
-        completeness, sources: { YECBUD: dep || null, YECBUR: rec || null }, operations,
+        completeness, sources: { YECBUD: dep || null, YECBUR: rec || null }, manualBalances: manualRows.filter((x:any)=>x.exercise===exercise), balancePositions, operations,
         totals: { revenue: operations.reduce((s:number,x:any)=>s+x.revenue,0), expense: operations.reduce((s:number,x:any)=>s+x.expense,0), balance: operations.reduce((s:number,x:any)=>s+x.balance,0) } };
     } catch (e:any) { req.log.error(e); return reply.code(400).send({ error: e.message || 'Financements affectés impossibles' }); }
   });
@@ -476,6 +531,20 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
           reason:
             'Le YBALAC importé par Vigie distingue actuellement les créances de plus de 120 jours, mais pas le sous-ensemble de plus de 365 jours.'
         };
+      }
+      // YGPIE1 porte des dates d'échéance exactes : il permet de distinguer réellement > 365 jours,
+      // contrairement aux seules tranches du YBALAC (>120 jours).
+      const ygAgedSnap = (await pool.query(
+        `select id from ygpie1_snapshots where upper(opale_entity)=upper($1) order by created_at desc limit 1`, [entity]
+      )).rows[0] || null;
+      if (ygAgedSnap) {
+        const q = (await pool.query(
+          `select coalesce(sum(greatest(debit_balance-credit_balance,0)),0) over_one_year,
+                  coalesce(sum(greatest(debit_balance-credit_balance,0)) filter (where account like '416%'),0) doubtful_over_one_year
+             from ygpie1_pieces
+            where snapshot_id=$1 and coalesce(due_date,initial_due_date) < current_date - interval '365 days'`, [ygAgedSnap.id]
+        )).rows[0];
+        aged = { ...(aged || {}), overOneYear:Number(q?.over_one_year||0), exactOverOneYear:true, source:'YGPIE1', reason:null };
       }
       return {
         exercise,
