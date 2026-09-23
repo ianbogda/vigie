@@ -90,7 +90,7 @@ export async function buildExpenseTrajectory(pool: Pool, context: ExpenseTraject
     ? (
         await pool.query(
           `select extract(year from pl.order_date)::int exercise,
-                  extract(month from pl.order_date)::int month,
+                  extract(month from pl.order_date)::int as "month",
                   coalesce(sum(case
                     when coalesce(pl.invoice_amount,0)>=0
                       then abs(coalesce(pl.invoice_amount,0))

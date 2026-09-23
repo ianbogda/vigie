@@ -21,7 +21,7 @@ export function registerFinancialRoutes(app: FastifyInstance, dependencies: Depe
         .map((x: any) => String(x).trim());
       const q = (
         await pool.query(
-          `select extract(year from pl.order_date)::int exercise,extract(month from pl.order_date)::int month,
+          `select extract(year from pl.order_date)::int exercise,extract(month from pl.order_date)::int as "month",
    coalesce(sum(case when coalesce(pl.invoice_amount,0)>=0 then abs(coalesce(pl.invoice_amount,0)) else 0 end),0) expenses,
    coalesce(sum(case when coalesce(pl.invoice_amount,0)<0 then abs(coalesce(pl.invoice_amount,0)) else 0 end),0) revenues,
    count(*)::int lines
